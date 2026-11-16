@@ -1,0 +1,7 @@
+.venv/
+.runtime/
+.cache/
+__pycache__/
+*.srt
+test_artifacts/
+sublens.log
