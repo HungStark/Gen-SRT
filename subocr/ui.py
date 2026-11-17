@@ -288,6 +288,7 @@ class MainWindow(QMainWindow):
         files.addWidget(self.options_button)
         self.colab_button = QPushButton('Colab GPU')
         colab_menu = QMenu(self.colab_button)
+        colab_menu.setObjectName('colabMenu')
         self.colab_export_action = colab_menu.addAction('1. Xuất gói chạy Colab…')
         self.colab_export_action.triggered.connect(self.export_colab)
         self.colab_import_action = colab_menu.addAction('2. Nhập kết quả Colab…')
@@ -316,6 +317,8 @@ class MainWindow(QMainWindow):
         left.addLayout(timeline)
         controls = QHBoxLayout()
         self.language = QComboBox()
+        self.language.setObjectName('languageSelector')
+        self.language.setItemDelegate(QStyledItemDelegate(self.language))
         self.language.addItem('Tiếng Trung', 'zh')
         self.language.addItem('Tiếng Anh', 'en')
         self.language.setToolTip('Ngôn ngữ xuất SRT · mặc định tiếng Trung')
@@ -958,6 +961,13 @@ QPushButton#primary { background: #167968; color: white; border-color: #167968; 
 QPushButton#primary:hover { background: #106253; }
 QPushButton#primary:disabled { background: #b7ccc7; border-color: #b7ccc7; }
 QComboBox, QDoubleSpinBox { background: white; padding: 5px; border: 1px solid #cad3df; border-radius: 4px; }
+QMenu#colabMenu { background: #262b34; color: #ffffff; border: 1px solid #526174; padding: 4px; }
+QMenu#colabMenu::item { color: #ffffff; padding: 7px 12px; }
+QMenu#colabMenu::item:selected { color: #ffffff; background: #167968; }
+QMenu#colabMenu::item:disabled { color: #ffffff; }
+QComboBox#languageSelector QAbstractItemView { background: #262b34; color: #ffffff; border: 1px solid #526174; selection-background-color: #167968; selection-color: #ffffff; outline: none; }
+QComboBox#languageSelector QAbstractItemView::item { color: #ffffff; background: #262b34; min-height: 26px; }
+QComboBox#languageSelector QAbstractItemView::item:selected { color: #ffffff; background: #167968; }
 QPlainTextEdit, QListWidget, QTableWidget { background: white; border: 1px solid #d5dce6; border-radius: 3px; selection-background-color: #c8e3f5; selection-color: #172b42; }
 QGroupBox { border: 1px solid #d5dce6; border-radius: 5px; margin-top: 8px; padding: 10px 6px 6px; }
 QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #53657b; }
