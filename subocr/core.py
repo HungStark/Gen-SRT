@@ -57,9 +57,6 @@ class Settings:
     min_duration: float = .08
     algorithm: str = 'adaptive'
     boundary_precision: float = .1
-    reference_spans: tuple[tuple[float, float], ...] | None = None
-    reference_padding: float = .7
-    outside_interval: float | None = 2.
 
 
 @dataclass
@@ -77,6 +74,7 @@ class Cue:
     text: str
     confidence: float = 1.0
     review: bool = False
+    edited: bool = False
 
 
 class OcrEngine:

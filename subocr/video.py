@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
 from dataclasses import dataclass, replace
 import math
 import threading
@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 
 from .core import CueBuilder, Observation, OcrEngine, Settings, normalized, same_text
-from .reference import build_reference_plan
 
 
 class Cancelled(Exception):
@@ -28,13 +27,6 @@ class ScanStats:
     cache_hits: int = 0
     uncertain_samples: int = 0
     elapsed: float = 0
-    reference_cues: int = 0
-    reference_windows: int = 0
-    reference_seconds: float = 0
-    outside_samples: int = 0
-    skipped_frames: int = 0
-    unmatched_reference_cues: int = 0
-    window_edge_events: int = 0
 
 
 @dataclass
@@ -42,6 +34,7 @@ class Sample:
     time: float
     image: np.ndarray
     observation: Observation | None = None
+    duration: float = 0.
 
 
 def frames(path):
@@ -154,14 +147,6 @@ def extract(path, cfg: Settings, engine: OcrEngine, cancel: threading.Event,
         x, y, w, h = cfg.roi
         if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > stream.width or y + h > stream.height:
             raise ValueError('Vùng OCR nằm ngoài khung hình. Hãy chọn lại vùng phụ đề.')
-    plan = None
-    if cfg.reference_spans is not None:
-        plan = build_reference_plan(cfg.reference_spans, cfg.reference_padding, total)
-        if cfg.outside_interval is not None and (not math.isfinite(cfg.outside_interval) or cfg.outside_interval <= 0):
-            raise ValueError('Bước quét bổ sung ngoài SRT phải lớn hơn 0.')
-        stats.reference_cues = len(cfg.reference_spans)
-        stats.reference_windows = len(plan.windows)
-        stats.reference_seconds = sum(end - start for start, end in plan.windows)
     adaptive = cfg.algorithm == 'adaptive' and cfg.interval > 0
     builder = CueBuilder(cfg.min_duration, strict=adaptive)
     # Only ROI images for the current interval stay in memory.
@@ -169,16 +154,11 @@ def extract(path, cfg: Settings, engine: OcrEngine, cancel: threading.Event,
     previous = None
     pending = []
     last_time, last_duration = 0., nominal
-    last_frame_time = -math.inf
-    active_window = None
-    next_idle_progress = 0.
 
     def process(sample):
         nonlocal previous, pending
         observation = reader.read(sample)
         stats.coarse_samples += 1
-        if plan is not None and plan.window_at(sample.time) is None:
-            stats.outside_samples += 1
         if previous is not None:
             old = reader.read(previous)
             if adaptive:
@@ -198,56 +178,17 @@ def extract(path, cfg: Settings, engine: OcrEngine, cancel: threading.Event,
             sample = pending.pop()
             process(sample)
 
-    def close_window(end):
-        nonlocal previous, pending
-        flush_tail()
-        if builder.current:
-            # Closing an unchecked region is a truncation, never evidence of a blank frame.
-            builder.review_current = True
-            stats.window_edge_events += 1
-        builder.finish(end)
-        previous, pending = None, []
-
     try:
         for time, duration, frame in frames(path):
             reader.check_cancel()
             stats.decoded_frames += 1
             last_time, last_duration = time, duration or nominal
-            window = plan.window_at(time) if plan is not None else None
-            anchor = plan is not None and plan.crosses_anchor(last_frame_time, time)
-            last_frame_time = time
-            only_windows = plan is not None and cfg.outside_interval is None
-            if only_windows and window is None:
-                if active_window is not None:
-                    close_window(active_window[1])
-                    active_window = None
-                stats.skipped_frames += 1
-                if time >= next_idle_progress:
-                    progress(time, total, len(builder.cues), 'Ngoài khoảng SRT · bỏ qua OCR')
-                    next_idle_progress = time + 1.
-                continue
-            # Two disjoint windows can fall between adjacent VFR frames with no frame in the gap.
-            if only_windows and active_window is not None and window != active_window:
-                close_window(active_window[1])
-            first_in_window = only_windows and previous is None
-            active_window = window
-            interval = cfg.interval if plan is None or window is not None else cfg.outside_interval
             sample = Sample(time, frame[y:y + h, x:x + w].copy())
-            if previous is not None and not anchor and time + 1e-6 < previous.time + interval:
+            if previous is not None and time + 1e-6 < previous.time + cfg.interval:
                 pending.append(sample)
                 continue
             process(sample)
-            if first_in_window and window[0] > 0 and sample.observation.text:
-                builder.review_current = True
-                stats.window_edge_events += 1
         flush_tail()
-        result = builder.finish(last_time + last_duration)
-        if plan is not None:
-            cue_ends = [cue.end for cue in result]
-            for start, end in cfg.reference_spans:
-                index = bisect_right(cue_ends, max(0., start - cfg.reference_padding))
-                if index == len(result) or result[index].start >= end + cfg.reference_padding:
-                    stats.unmatched_reference_cues += 1
-        return result
+        return builder.finish(last_time + last_duration)
     finally:
         stats.elapsed = perf_counter() - started
