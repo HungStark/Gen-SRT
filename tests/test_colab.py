@@ -2,6 +2,7 @@ import copy
 from dataclasses import asdict
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -123,12 +124,14 @@ class ColabTests(unittest.TestCase):
             OcrEngine()
             self.assertFalse(rapid.call_args.kwargs['det_use_cuda'])
             self.assertFalse(rapid.call_args.kwargs['rec_use_cuda'])
-            rapid.return_value.text_det.session.session.get_providers.return_value = ['CPUExecutionProvider']
+            # Strict shapes reflect RapidOCR 1.4.4: detector.infer, recognizer.session.
+            detector_inference = SimpleNamespace(session=SimpleNamespace(get_providers=lambda: ['CPUExecutionProvider']))
+            recognizer_inference = SimpleNamespace(session=SimpleNamespace(get_providers=lambda: ['CUDAExecutionProvider']))
+            rapid.return_value.text_det = SimpleNamespace(infer=detector_inference)
+            rapid.return_value.text_rec = SimpleNamespace(session=recognizer_inference)
             with self.assertRaisesRegex(RuntimeError, 'GPU'):
                 OcrEngine(use_cuda=True)
-            for component in ('text_det', 'text_rec'):
-                getattr(rapid.return_value, component).session.session.get_providers.return_value = [
-                    'CUDAExecutionProvider', 'CPUExecutionProvider']
+            detector_inference.session.get_providers = lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider']
             engine = OcrEngine(use_cuda=True)
             self.assertTrue(rapid.call_args.kwargs['rec_use_cuda'])
             with patch('rapidocr_onnxruntime.ch_ppocr_rec.TextRecognizer') as english:
@@ -136,6 +139,19 @@ class ColabTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'tiếng Anh'):
                     engine.read_english(None)
                 self.assertTrue(english.call_args.args[0]['use_cuda'])
+
+    def test_cuda_check_uses_real_rapidocr_detector_and_recognizer_sessions(self):
+        engine = OcrEngine()
+        # Access real library objects on CPU: the guard must report the absent GPU,
+        # rather than raise AttributeError from an invented detector attribute.
+        for inference in (engine.engine.text_det.infer, engine.engine.text_rec.session):
+            with self.subTest(inference=inference), self.assertRaisesRegex(RuntimeError, 'GPU'):
+                engine._require_cuda(inference, 'test')
+        # Only provider reporting is patched; object structure remains the real library's.
+        with patch.object(engine.engine.text_det.infer.session, 'get_providers', return_value=['CUDAExecutionProvider']), \
+                patch.object(engine.engine.text_rec.session.session, 'get_providers', return_value=['CUDAExecutionProvider']), \
+                patch('rapidocr_onnxruntime.RapidOCR', return_value=engine.engine):
+            OcrEngine(use_cuda=True)
 
     def test_chinese_bundle_omits_optional_model(self):
         folder = export_bundle(self.root, self.video, Settings((0, 70, 320, 30)), 320, 100, 4.8)

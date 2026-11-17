@@ -189,12 +189,12 @@ class OcrEngine:
                                det_use_cuda=use_cuda, rec_use_cuda=use_cuda)
         self.english = None
         if use_cuda:
-            self._require_cuda(self.engine.text_det, 'phát hiện chữ')
-            self._require_cuda(self.engine.text_rec, 'nhận dạng chữ')
+            self._require_cuda(self.engine.text_det.infer, 'phát hiện chữ')
+            self._require_cuda(self.engine.text_rec.session, 'nhận dạng chữ')
 
     @staticmethod
-    def _require_cuda(component, name):
-        if component.session.session.get_providers()[0] != 'CUDAExecutionProvider':
+    def _require_cuda(inference, name):
+        if inference.session.get_providers()[0] != 'CUDAExecutionProvider':
             raise RuntimeError(f'OCR {name} chưa dùng được GPU. Kiểm tra runtime GPU và CUDA/cuDNN trong notebook.')
 
     def read_english(self, image):
@@ -207,7 +207,7 @@ class OcrEngine:
                                                intra_op_num_threads=4, inter_op_num_threads=1,
                                                rec_img_shape=[3, 48, 320], rec_batch_num=6))
             if self.use_cuda:
-                self._require_cuda(english, 'tiếng Anh')
+                self._require_cuda(english.session, 'tiếng Anh')
             self.english = english
         results, _ = self.english(image)
         return results[0]

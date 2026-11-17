@@ -22,6 +22,7 @@ cells = [
 
     Chọn **Runtime → Change runtime type → GPU** (ví dụ T4 nếu được cấp), rồi chạy từng ô từ trên xuống.
     Notebook yêu cầu CUDA thực sự hoạt động; sẽ báo lỗi nếu engine chỉ dùng CPU.
+    OCR dùng Python 3.12 trong môi trường riêng, kể cả khi kernel Colab dùng Python 3.13.
     Cài đặt lần đầu có thể mất vài phút và tải các thư viện CUDA/cuDNN.
     Video được xử lý trên máy chủ Google. Giữ notebook mở khi quét;
     Colab có thể ngắt phiên hoặc không cấp GPU. Notebook không tự khôi phục một lượt quét bị ngắt.
@@ -29,34 +30,101 @@ cells = [
     '''),
     code('''
     # @title 1. Kiểm tra GPU và cài thư viện
+    from collections import deque
+    import os
+    from pathlib import Path
     import subprocess
     import sys
+    import textwrap
+
+    # Explicitly pipe the child output: inherited stderr may be invisible in Colab.
+    def run_logged(command, log_path='/content/sublens_setup.log', env=None, cwd=None):
+        tail = deque(maxlen=60)
+        log_path = Path(log_path)
+        with log_path.open('a', encoding='utf-8') as log:
+            log.write('COMMAND: ' + repr(command) + '\\n')
+            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, encoding='utf-8', errors='replace', bufsize=1,
+                                  env=env, cwd=cwd) as process:
+                try:
+                    for line in process.stdout:
+                        print(line, end='', flush=True)
+                        log.write(line)
+                        log.flush()
+                        tail.append(line)
+                    returncode = process.wait()
+                except BaseException:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    raise
+        if returncode:
+            details = ''.join(tail)
+            raise RuntimeError(f'Tiến trình lỗi (mã {returncode}). Log: {log_path}\\n{details}') from None
 
     gpu = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
     if gpu.returncode:
         raise RuntimeError('Chưa có GPU. Chọn Runtime → Change runtime type → GPU rồi chạy lại.')
     print(gpu.stdout)
-    def pip(*args):
-        subprocess.run([sys.executable, '-m', 'pip', *args], check=True)
-
-    # RapidOCR depends on the CPU package; replace it after installing RapidOCR.
-    # Inference runs in a fresh subprocess so notebook imports cannot retain a stale CPU runtime.
-    pip('install', '-q', 'rapidocr-onnxruntime==1.4.4', 'numpy==2.2.6',
-        'opencv-python==4.11.0.86', 'av==16.0.1', 'Pillow==11.2.1')
-    pip('uninstall', '-y', '-q', 'onnxruntime', 'onnxruntime-gpu')
-    pip('install', '-q', 'onnxruntime-gpu[cuda,cudnn]==1.23.2')
+    print('Kernel notebook:', sys.version)
+    OCR_PYTHON = None
+    bootstrap = Path('/content/sublens_bootstrap')
+    if not (bootstrap / 'uv/__main__.py').is_file():
+        run_logged([sys.executable, '-m', 'pip', 'install', '--target', str(bootstrap), 'uv==0.11.23'])
+    uv_env = {**os.environ, 'PYTHONPATH': str(bootstrap),
+              'UV_PYTHON_INSTALL_DIR': '/content/sublens_python', 'UV_CACHE_DIR': '/content/sublens_cache'}
+    uv = [sys.executable, '-m', 'uv', '--no-config']
+    runtime = Path('/content/sublens_runtime_py312')
+    python = runtime / 'bin/python'
+    if not python.is_file():
+        run_logged([*uv, 'venv', '--python', '3.12', '--managed-python', str(runtime)], env=uv_env)
+    # Keep packages out of the Colab kernel and never substitute the unrelated `rapidocr` API.
+    run_logged([*uv, 'pip', 'install', '--python', str(python), '--only-binary', ':all:',
+                'rapidocr-onnxruntime==1.4.4', 'numpy==2.2.6', 'opencv-python==4.11.0.86',
+                'av==16.0.1', 'Pillow==11.2.1'], env=uv_env)
+    run_logged([*uv, 'pip', 'uninstall', '--python', str(python), 'onnxruntime', 'onnxruntime-gpu'], env=uv_env)
+    run_logged([*uv, 'pip', 'install', '--python', str(python), '--only-binary', ':all:',
+                'onnxruntime-gpu[cuda,cudnn]==1.23.2'], env=uv_env)
+    OCR_ENV = dict(os.environ)
+    for key in ('PYTHONPATH', 'PYTHONHOME'):
+        OCR_ENV.pop(key, None)
+    OCR_ENV['PYTHONUNBUFFERED'] = '1'
+    gpu_check = textwrap.dedent("""
+    import sys
+    import numpy as np
+    import av, cv2
+    import onnxruntime as ort
+    print('Python OCR:', sys.version, flush=True)
+    print('ONNX Runtime:', ort.__version__, ort.get_available_providers(), flush=True)
+    ort.preload_dlls(directory='')
+    from rapidocr_onnxruntime import RapidOCR
+    ocr = RapidOCR(det_use_cuda=True, rec_use_cuda=True, intra_op_num_threads=2)
+    for name, inference in (('text_det', ocr.text_det.infer), ('text_rec', ocr.text_rec.session)):
+        providers = inference.session.get_providers()
+        print(name, providers, flush=True)
+        if providers[0] != 'CUDAExecutionProvider':
+            raise RuntimeError('OCR chưa dùng được CUDA. Xem lỗi thư viện GPU ở phía trên.')
+    ocr(np.zeros((96, 640, 3), dtype=np.uint8), use_cls=False)
+    print('Đã chạy thử OCR trên GPU thành công.', flush=True)
+    """)
+    run_logged([str(python), '-u', '-c', gpu_check], env=OCR_ENV)
+    OCR_PYTHON = str(python)
     print('Đã cài xong. Chạy ô 2 để tải gói job.zip.')
     '''),
     code('''
     # @title 2. Tải job.zip xuất từ app
     from google.colab import files
     from pathlib import Path
-    import importlib
     import json
     import tempfile
     import zipfile
+    from types import SimpleNamespace
 
     job = cfg = video = output = None
+    if not globals().get('OCR_PYTHON'):
+        raise RuntimeError('Chạy thành công ô 1 trước.')
     uploaded = files.upload()
     if len(uploaded) != 1:
         raise ValueError('Chỉ chọn một tệp job.zip xuất từ app.')
@@ -75,15 +143,12 @@ cells = [
         for name in names:
             archive.extract(name, workspace)
 
-    # Reload only this package if a different job was uploaded in the same notebook session.
-    for name in list(sys.modules):
-        if name == 'subocr' or name.startswith('subocr.'):
-            del sys.modules[name]
-    sys.path.insert(0, str(workspace))
-    importlib.invalidate_caches()
-    from subocr.colab import read_json, validate_job, verify_video
-    job = read_json(workspace / 'job.json')
-    cfg = validate_job(job)
+    # Only the Python 3.12 subprocess imports OCR/video modules.
+    run_logged([OCR_PYTHON, '-u', '-c',
+                "from subocr.colab import read_json, validate_job; validate_job(read_json('job.json'))"],
+               cwd=str(workspace), env=OCR_ENV)
+    job = json.loads((workspace / 'job.json').read_text(encoding='utf-8-sig'))
+    cfg = SimpleNamespace(**job['settings'])
     print('Video gốc:', job['video']['name'])
     print('Ngôn ngữ:', cfg.language, '· vùng:', cfg.roi)
     print('Gói đã sẵn sàng. Chọn nguồn video trong ô 3.')
@@ -115,7 +180,9 @@ cells = [
         del uploaded
     if not video.is_file():
         raise ValueError('Không tìm thấy video. Kiểm tra đường dẫn ở trên.')
-    verify_video(job, video)
+    run_logged([OCR_PYTHON, '-u', '-c',
+                "import sys; from subocr.colab import read_json, verify_video; verify_video(read_json('job.json'), sys.argv[1])",
+                str(video)], cwd=str(workspace), env=OCR_ENV)
     if video_source == 'Google Drive' and copy_to_local:
         # Sequential decoding from the local disk avoids repeated Drive reads.
         if shutil.disk_usage(workspace).free < video.stat().st_size + 256 * 1024 * 1024:
@@ -131,11 +198,15 @@ cells = [
 
     # A new output directory for every run prevents an older result being downloaded after an error.
     output = None
+    if not globals().get('OCR_PYTHON'):
+        raise RuntimeError('Chạy thành công ô 1 trước.')
+    if globals().get('video') is None or not video.is_file():
+        raise RuntimeError('Chọn video ở ô 3 trước.')
     run_output = Path(tempfile.mkdtemp(prefix='result_', dir=workspace))
-    command = [sys.executable, str(workspace / 'colab/run_job.py'),
+    command = [OCR_PYTHON, '-u', str(workspace / 'colab/run_job.py'),
                '--job', str(workspace / 'job.json'), '--video', str(video), '--output', str(run_output)]
     # The child streams progress and checks CUDA on the actual OCR sessions.
-    subprocess.run(command, check=True)
+    run_logged(command, log_path=run_output / 'ocr.log', env=OCR_ENV)
     output = run_output
     if save_results_to_drive:
         from google.colab import drive
