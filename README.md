@@ -39,6 +39,10 @@ Dòng vàng: OCR cần xem lại. Dòng xanh nhạt: đã sửa thủ công. Dò
 
 Tool giải mã video tuần tự, giữ ảnh vùng sub của khoảng đang xét trong RAM. OCR lấy mẫu khoảng 0,5 giây. Khi hai mẫu khác chữ, đọc điểm giữa và tiếp tục chia khoảng có thay đổi, tới khoảng 0,1 giây hoặc khi không còn frame nguồn ở giữa. Timestamp lấy từ khung hình thực qua PyAV, hỗ trợ VFR. Các mục ngắn hơn 0,08 giây bị loại để giảm nháy OCR.
 
+Tool ổn định một số nhầm ký tự tiếng Anh như `I/l`, mất `i/l`, `rn/m` khi câu đủ dài và hình nét chữ cũng khớp. Thay đổi số, chữ Trung hoặc từ khác không được gộp chỉ vì câu gần giống. Sau lượt quét, các đoạn liền nhau có cùng chữ chuẩn hóa được tự gộp; khoảng hụt OCR tối đa 0,1 giây cũng được nối và đánh dấu xem lại. Khoảng trống dài hơn hoặc có một câu khác ở giữa sẽ giữ riêng. Với khoảng trống thật rất ngắn giữa hai lần lặp cùng câu, quy tắc nối 0,1 giây cũng có thể gộp chúng; cần kiểm tra mục được đánh dấu. Ô thông báo ghi số kết quả OCR đã ổn định và số đoạn trùng được gộp.
+
+Các cụm chữ cùng hàng nhưng cách xa nhau được tách trước khi lọc ngôn ngữ, tránh ghép biển chữ ở rìa ảnh vào phụ đề. Crop nhận diện tiếng Anh được thu sát nét chữ để giảm dao động khi hộp OCR thừa/thiếu viền. So sánh hình nét chữ dùng tương phản cục bộ, giúp ổn định khi nền chuyển cảnh hoặc chữ mờ dần.
+
 Hai đầu cùng chữ hoặc cùng trống vẫn có thể che giấu một câu/khoảng trống rất ngắn nằm hoàn toàn giữa hai mẫu. Bước quét 0,5 giây không bảo đảm tìm đủ câu ngắn hơn 0,5 giây. Mục tiêu 0,1 giây là độ rộng khoảng tìm biên, không phải cam kết OCR luôn đúng. Chữ mờ, hiệu ứng xuất hiện dần, karaoke, phụ đề đổi vị trí hoặc chữ trong cảnh giống sub vẫn cần kiểm tra lại.
 
 Khung có chữ phù hợp nhưng OCR điểm thấp được thử đọc lại; nếu chưa rõ, không tự coi là phụ đề biến mất. Các mục liên quan được đánh dấu xem lại. Tool có thể vẫn bỏ sót hoàn toàn một vùng chữ khó đọc. Mô hình Trung đi kèm không bảo đảm đọc tốt mọi chữ phồn thể/hiếm/font cách điệu.

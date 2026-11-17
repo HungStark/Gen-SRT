@@ -576,6 +576,9 @@ class MainWindow(QMainWindow):
             stats = self.last_scan_stats
             self.log.setPlainText(f'Đã quét xong: {len(result)} đoạn. Chỉnh sửa ở bảng bên phải.\n'
                                   f'OCR {stats.ocr_calls} lần · {stats.elapsed:.1f} giây · bước quét 0,5 giây.')
+            if stats.stabilized_reads or stats.merged_duplicates:
+                self.log.appendPlainText(f'Ổn định {stats.stabilized_reads} kết quả OCR dao động; '
+                                         f'gộp {stats.merged_duplicates} đoạn trùng liền nhau.')
             if not result:
                 self.log.appendPlainText('Không tìm thấy sub phù hợp. Kiểm tra vùng chọn và ngôn ngữ.')
             self.statusBar().showMessage('Quét hoàn tất. Có thể sửa chữ, xóa hoặc gộp các đoạn liền nhau.')

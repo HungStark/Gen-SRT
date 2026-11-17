@@ -10,7 +10,7 @@ import av
 import cv2
 import numpy as np
 
-from .core import CueBuilder, Observation, OcrEngine, Settings, normalized, same_text
+from .core import CueBuilder, Observation, OcrEngine, Settings, same_caption, same_text, coalesce_equal_cues
 
 
 class Cancelled(Exception):
@@ -27,6 +27,8 @@ class ScanStats:
     cache_hits: int = 0
     uncertain_samples: int = 0
     elapsed: float = 0
+    stabilized_reads: int = 0
+    merged_duplicates: int = 0
 
 
 @dataclass
@@ -62,7 +64,7 @@ def equivalent(a: Observation, b: Observation, strict=True) -> bool:
         return False
     if bool(a.text) != bool(b.text):
         return False
-    return normalized(a.text) == normalized(b.text) if strict else same_text(a.text, b.text)
+    return same_caption(a, b) if strict else same_text(a.text, b.text)
 
 
 class IntervalReader:
@@ -189,6 +191,10 @@ def extract(path, cfg: Settings, engine: OcrEngine, cancel: threading.Event,
                 continue
             process(sample)
         flush_tail()
-        return builder.finish(last_time + last_duration)
+        raw = builder.finish(last_time + last_duration)
+        result = coalesce_equal_cues(raw)
+        stats.stabilized_reads = builder.stabilized_reads
+        stats.merged_duplicates = len(raw) - len(result)
+        return result
     finally:
         stats.elapsed = perf_counter() - started

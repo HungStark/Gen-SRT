@@ -28,7 +28,8 @@ class FakeEngine:
             self.cancel.set()
         if index in self.uncertain_at:
             return Observation(uncertain=True)
-        return Observation(self.state(index), .98)
+        value = self.state(index)
+        return value if isinstance(value, Observation) else Observation(value, .98)
 
 
 class AdaptiveTests(unittest.TestCase):
@@ -104,6 +105,25 @@ class AdaptiveTests(unittest.TestCase):
         self.assertEqual(stats.ocr_calls, stats.decoded_frames)
         with self.assertRaises(Cancelled):
             self.scan(lambda i: '你好', cancel=threading.Event())
+
+    def test_visual_confirmed_ocr_wobble_does_not_split_or_refine(self):
+        mask = np.zeros((32, 384), dtype=bool)
+        mask[6:26, 8:376:8] = True
+        a = 'This film received creative support from Seko Ai'
+        b = 'This flm received creative support from Seko Ai'
+        cues, stats, _ = self.scan(lambda i: Observation(a if i % 2 else b, .99, visual_mask=mask))
+        self.assertEqual(len(cues), 1)
+        self.assertGreater(stats.stabilized_reads, 0)
+        self.assertEqual(stats.refinement_calls, 0)
+
+    def test_short_dropout_is_joined_but_a_clear_gap_is_kept(self):
+        sentence = 'This film received creative support from Seko Ai'
+        cues, stats, _ = self.scan(lambda i: sentence if i < 50 or 51 <= i < 120 else '', interval=0)
+        self.assertEqual(len(cues), 1)
+        self.assertEqual(stats.merged_duplicates, 1)
+        self.assertTrue(cues[0].review)
+        cues, _, _ = self.scan(lambda i: sentence if i < 50 or 55 <= i < 120 else '', interval=0)
+        self.assertEqual(len(cues), 2)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
@@ -65,6 +65,109 @@ class Observation:
     score: float = 0
     lines: list[Line] = field(default_factory=list)
     uncertain: bool = False
+    visual_mask: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+
+def ocr_lookalike(a: str, b: str) -> bool:
+    """Conservative Latin OCR confusions; actual numbers and Chinese changes stay distinct."""
+    if has_han(a) or has_han(b):
+        return False
+    x, y = normalized(a), normalized(b)
+    if min(len(x), len(y)) < 20 or re.findall(r'\d+', x) != re.findall(r'\d+', y):
+        return False
+    matcher = SequenceMatcher(None, x, y, autojunk=False)
+    if matcher.ratio() < .96:
+        return False
+    for kind, a0, a1, b0, b1 in matcher.get_opcodes():
+        if kind == 'equal':
+            continue
+        left, right = x[a0:a1], y[b0:b1]
+        if left + right and set(left + right) <= {'i', 'l'}:
+            continue
+        if (left, right) in (('rn', 'm'), ('m', 'rn'), ('vv', 'w'), ('w', 'vv')):
+            continue
+        return False
+    return True
+
+
+def text_ink_mask(patch: np.ndarray, color=None):
+    """Separate thin subtitle strokes from a changing background without a fixed white cutoff."""
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    if color is not None and np.mean(color) < 128:
+        gray = 255 - gray
+    kernel = max(5, min(31, (patch.shape[0] // 4) | 1))
+    contrast = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, np.ones((kernel, kernel), np.uint8))
+    threshold, _ = cv2.threshold(contrast, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return (contrast > max(10, threshold)).astype(np.uint8)
+
+
+def tight_english_patch(patch: np.ndarray):
+    ink = text_ink_mask(patch)
+    x, y, w, h = cv2.boundingRect(ink)
+    # Do not cut away a large portion of a line if the contrast estimate is incomplete.
+    if ink.sum() < 30 or w < patch.shape[1] * .7 or h < patch.shape[0] * .3:
+        return patch
+    return patch[max(0, y - 1):min(patch.shape[0], y + h + 1),
+                 max(0, x - 1):min(patch.shape[1], x + w + 1)]
+
+
+def subtitle_mask(crop: np.ndarray, lines: list[Line], color=None, tolerance=75):
+    masks = []
+    for line in lines:
+        left, top, right, bottom = line.box
+        patch = crop[top:bottom, left:right]
+        if not patch.size:
+            return None
+        glyphs = text_ink_mask(patch, color)
+        left, top, width, height = cv2.boundingRect(glyphs)
+        if glyphs.sum() < 30 or width <= 0 or height <= 0:
+            return None
+        glyphs = glyphs[top:top + height, left:left + width]
+        mask = cv2.resize(glyphs * 255, (384, 32), interpolation=cv2.INTER_AREA) >= 110
+        masks.append(mask)
+    return np.concatenate(masks, axis=0) if masks else None
+
+
+def same_glyphs(a, b) -> bool:
+    if a is None or b is None or a.shape != b.shape or min(a.sum(), b.sum()) < 30:
+        return False
+    # Allow only a tiny translation from OCR boxes/encoding, then check local glyph differences.
+    best = None
+    expanded_a = cv2.dilate(a.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    padded = np.pad(b, ((1, 1), (2, 2)))
+    for dy in range(3):
+        for dx in range(5):
+            candidate = padded[dy:dy + a.shape[0], dx:dx + a.shape[1]]
+            expanded_b = cv2.dilate(candidate.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            mismatch = (a & ~expanded_b) | (candidate & ~expanded_a)
+            union = max(1, np.logical_or(a, candidate).sum())
+            score = (mismatch.sum() / union, np.logical_xor(a, candidate).sum() / union)
+            if best is None or score < best[0]:
+                best = (score, mismatch, candidate)
+    if best[0][1] > .35:
+        return False
+    _, _, candidate = best
+    if abs(int(a.sum()) - int(candidate.sum())) / max(a.sum(), candidate.sum()) > .08:
+        return False
+    # A one-pixel stroke tolerance also handles a one-pixel change in detected line height.
+    mismatch = best[1]
+    if mismatch.sum() / max(1, np.logical_or(a, candidate).sum()) > .015:
+        return False
+    for top in range(0, a.shape[0], 32):
+        for left in range(0, a.shape[1], 24):
+            region = np.s_[top:top + 32, left:left + 24]
+            union = np.logical_or(a[region], candidate[region]).sum()
+            if union >= 12 and mismatch[region].sum() / union > .10:
+                return False
+    return True
+
+
+def same_caption(a: Observation, b: Observation) -> bool:
+    if a.uncertain or b.uncertain or bool(a.text) != bool(b.text):
+        return False
+    if normalized(a.text) == normalized(b.text):
+        return True
+    return ocr_lookalike(a.text, b.text) and same_glyphs(a.visual_mask, b.visual_mask)
 
 
 @dataclass
@@ -123,9 +226,22 @@ class OcrEngine:
                 rows.append([line])
             else:
                 target.append(line)
+        # Same baseline is insufficient: scene text far away from the caption must stay separate.
+        horizontal_runs = []
+        for row in rows:
+            row.sort(key=lambda line: line.box[0])
+            limit = max(3 * float(np.median([line.box[3] - line.box[1] for line in row])), w * .04)
+            run = []
+            for line in row:
+                if run and line.box[0] - run[-1].box[2] > limit:
+                    horizontal_runs.append(run)
+                    run = []
+                run.append(line)
+            if run:
+                horizontal_runs.append(run)
         lines = []
         uncertain = False
-        for row in rows:
+        for row in horizontal_runs:
             row.sort(key=lambda r: r.box[0])
             sep = '' if has_han(''.join(r.text for r in row)) else ' '
             box = (min(r.box[0] for r in row), min(r.box[1] for r in row),
@@ -137,7 +253,7 @@ class OcrEngine:
                 patch = enlarged[max(0, round(top * scale) - 2): min(enlarged.shape[0], round(bottom * scale) + 2),
                                  max(0, round(left * scale) - 2): min(enlarged.shape[1], round(right * scale) + 2)]
                 if patch.size:
-                    text, score = self.read_english(patch)
+                    text, score = self.read_english(tight_english_patch(patch))
             line = Line(text, score, box)
             left, top, right, bottom = box
             center = (top + bottom) / (2 * h)
@@ -160,8 +276,9 @@ class OcrEngine:
             uncertain = uncertain or (candidate and score < cfg.confidence)
             lines.append(line)
         selected = [line for line in lines if line.accepted]
-        return Observation('\n'.join(line.text for line in selected),
-                           min((line.score for line in selected), default=0), lines, uncertain)
+        text = '\n'.join(line.text for line in selected)
+        signature = subtitle_mask(crop, selected, cfg.color, cfg.color_tolerance) if cfg.language == 'en' and len(normalized(text)) >= 20 else None
+        return Observation(text, min((line.score for line in selected), default=0), lines, uncertain, signature)
 
 
 class CueBuilder:
@@ -176,6 +293,8 @@ class CueBuilder:
         self.strict = strict
         self.review_current = False
         self.unresolved = False
+        self.current_observation = Observation()
+        self.stabilized_reads = 0
 
     def _finish(self, end):
         if self.current and end - self.start >= self.min_duration:
@@ -194,7 +313,9 @@ class CueBuilder:
             self.unresolved = True
             self.last_time = time
             return
-        equal = normalized(self.current) == normalized(text) if self.strict else same_text(self.current, text)
+        equal = same_caption(self.current_observation, observation) if self.strict else same_text(self.current, text)
+        if self.strict and equal and normalized(self.current) != normalized(text):
+            self.stabilized_reads += 1
         changed = bool(text) != bool(self.current) or (text and not equal)
         if changed:
             # The first frame carrying the new state defines its presentation timestamp.
@@ -202,6 +323,7 @@ class CueBuilder:
             self._finish(boundary)
             self.start = boundary
             self.current = text
+            self.current_observation = observation
             self.variants = {}
             self.review_current = self.unresolved
         if text:
@@ -215,7 +337,32 @@ class CueBuilder:
         self.variants = {}
         self.review_current = False
         self.unresolved = False
+        self.current_observation = Observation()
         return self.cues
+
+
+def coalesce_equal_cues(cues: list[Cue], max_gap=.1) -> list[Cue]:
+    """Join identical adjacent scan results, bridging at most one small OCR dropout."""
+    result = []
+    votes = {}
+    observed_duration = 0.
+    for cue in cues:
+        weight = max(.001, cue.end - cue.start) * cue.confidence
+        if result and normalized(result[-1].text) == normalized(cue.text) and -1e-9 <= cue.start - result[-1].end <= max_gap + 1e-9:
+            previous = result[-1]
+            gap = max(0., cue.start - previous.end)
+            duration = cue.end - cue.start
+            votes[cue.text] = votes.get(cue.text, 0.) + weight
+            result[-1] = replace(previous, end=cue.end, text=max(votes, key=votes.get),
+                                 confidence=(previous.confidence * observed_duration + cue.confidence * duration) / (observed_duration + duration),
+                                 review=previous.review or cue.review or gap > 1e-6,
+                                 edited=previous.edited or cue.edited)
+            observed_duration += duration
+        else:
+            result.append(replace(cue))
+            votes = {cue.text: weight}
+            observed_duration = cue.end - cue.start
+    return result
 
 
 def timestamp(seconds: float) -> str:
