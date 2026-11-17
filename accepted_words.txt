@@ -1,0 +1,2 @@
+# Tên riêng/từ tiếng Anh được chấp nhận, mỗi dòng một từ hoặc một tên.
+# Có thể sửa danh sách này trong Tùy chọn của SubLens.

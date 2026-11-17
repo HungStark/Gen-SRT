@@ -10,7 +10,7 @@ Khi cần cài lại, cài [uv](https://docs.astral.sh/uv/getting-started/instal
 
 ## Bố cục và cách quét
 
-- **Bên trái:** video, thanh tua, chọn ngôn ngữ, Đọc thử khung hình, Đọc cả video và nội dung đọc thử.
+- **Bên trái:** khung video tỷ lệ 16:9, thanh tua, hàng nút gọn và nội dung đọc thử. Khung video ưu tiên dùng hết chiều ngang; khi cửa sổ thấp, tự thu nhỏ để vẫn thấy các nút. Video giữ tỷ lệ gốc bên trong khung, không kéo méo. Ô đọc thử/danh sách dòng có thanh cuộn khi nội dung dài.
 - **Bên phải:** bảng bắt đầu, kết thúc, nội dung, tin cậy; các nút sửa, xóa, gộp, hoàn tác và xuất SRT.
 - **Phía dưới:** tiến trình quét, nút Dừng và trạng thái. Có thể kéo vạch giữa hai cột để đổi tỷ lệ.
 
@@ -33,19 +33,28 @@ Trong **Tùy chọn…** có khóa dòng theo kết quả đọc thử, ngưỡn
 
 **Hoàn tác:** nút Hoàn tác phục hồi thao tác sửa/xóa/gộp gần nhất, tối đa 30 thao tác trong lượt kết quả hiện tại. Ctrl+Z hoạt động khi bảng có focus; khi đang nhập chữ, trình soạn thảo xử lý Ctrl+Z riêng. Một lượt quét thành công mới hoặc mở video mới thay thế danh sách và lịch sử hiện tại.
 
-Dòng vàng: OCR cần xem lại. Dòng xanh nhạt: đã sửa thủ công. Dòng đỏ nhạt: thời gian không hợp lệ, chồng lấn hoặc chữ rỗng. Cột tin cậy chuyển thành **Đã sửa** khi sửa/gộp; tooltip giữ điểm OCR gốc để tham khảo. Các lỗi thời gian hoặc nội dung phải được chỉnh trước khi xuất. Sau khi xóa/gộp, số thứ tự trong SRT được đánh lại liên tục.
+Màu nền dòng được chọn theo thứ tự ưu tiên **đỏ → cam → vàng**:
+
+- **Đỏ:** điểm OCR gốc dưới **80%**; đúng 80% không thuộc điều kiện này.
+- **Cam:** có từ tiếng Anh nghi sai chính tả, ví dụ `flm`, `frst`, `Offcial`. Chỉ cảnh báo và gợi ý, không tự sửa chữ.
+- **Vàng:** nội dung giống hoặc gần giống dòng ngay trước/sau; cả hai dòng được đánh dấu. So sánh bỏ qua hoa/thường, dấu câu và khoảng trắng; câu dài dùng mức giống ít nhất 90%. Đây là cảnh báo, không tự gộp hoặc thay nội dung.
+- **Trắng:** không mắc ba điều kiện trên. Điểm cao, cờ cần kiểm tra cũ hoặc đã sửa thủ công không tự làm đổi màu nền.
+
+Rê chuột lên bất kỳ ô nào để xem tất cả lý do, kể cả khi một màu ưu tiên đã che các cảnh báo khác. Màu được tính lại sau khi sửa/xóa/gộp/hoàn tác. Cột tin cậy chuyển thành **Đã sửa** khi sửa/gộp; tooltip giữ điểm OCR gốc để tham khảo. Các lỗi thời gian/chữ rỗng hiển thị bằng chữ đỏ và tooltip lỗi, phải sửa trước khi xuất; không ghi đè quy tắc màu nền. Sau khi xóa/gộp, số thứ tự trong SRT được đánh lại liên tục.
+
+Cảnh báo chính tả dùng từ điển tiếng Anh cục bộ, ưu tiên ít báo nhầm: chỉ nghi ngờ từ lệch một ký tự so với từ thông dụng, bỏ qua mã/số, chữ viết tắt và từ có chữ hoa giữa câu để giữ tên riêng như Kunzi. Tên riêng ở đầu câu vẫn có thể bị nghi nhầm nếu giống từ thông dụng; thêm vào **Tùy chọn → Tên riêng / từ tiếng Anh được chấp nhận**, mỗi dòng một tên, rồi đóng hộp thoại để áp dụng/lưu. Danh sách nằm trong `accepted_words.txt`, không phân biệt hoa/thường và được giữ qua các lần mở ứng dụng. Bộ kiểm tra này không kiểm tra ngữ pháp, không phát hiện mọi lỗi và không kiểm tra chính tả tiếng Trung.
 
 ## Cách xác định mốc thời gian
 
 Tool giải mã video tuần tự, giữ ảnh vùng sub của khoảng đang xét trong RAM. OCR lấy mẫu khoảng 0,5 giây. Khi hai mẫu khác chữ, đọc điểm giữa và tiếp tục chia khoảng có thay đổi, tới khoảng 0,1 giây hoặc khi không còn frame nguồn ở giữa. Timestamp lấy từ khung hình thực qua PyAV, hỗ trợ VFR. Các mục ngắn hơn 0,08 giây bị loại để giảm nháy OCR.
 
-Tool ổn định một số nhầm ký tự tiếng Anh như `I/l`, mất `i/l`, `rn/m` khi câu đủ dài và hình nét chữ cũng khớp. Thay đổi số, chữ Trung hoặc từ khác không được gộp chỉ vì câu gần giống. Sau lượt quét, các đoạn liền nhau có cùng chữ chuẩn hóa được tự gộp; khoảng hụt OCR tối đa 0,1 giây cũng được nối và đánh dấu xem lại. Khoảng trống dài hơn hoặc có một câu khác ở giữa sẽ giữ riêng. Với khoảng trống thật rất ngắn giữa hai lần lặp cùng câu, quy tắc nối 0,1 giây cũng có thể gộp chúng; cần kiểm tra mục được đánh dấu. Ô thông báo ghi số kết quả OCR đã ổn định và số đoạn trùng được gộp.
+Tool ổn định một số nhầm ký tự tiếng Anh như `I/l`, mất `i/l`, `rn/m` khi câu đủ dài và hình nét chữ cũng khớp. Thay đổi số, chữ Trung hoặc từ khác không được gộp chỉ vì câu gần giống. Sau lượt quét, các đoạn liền nhau có cùng chữ chuẩn hóa được tự gộp; khoảng hụt OCR tối đa 0,1 giây cũng được nối. Khoảng trống dài hơn hoặc có một câu khác ở giữa sẽ giữ riêng. Với khoảng trống thật rất ngắn giữa hai lần lặp cùng câu, quy tắc nối 0,1 giây cũng có thể gộp chúng; cần kiểm tra lại mốc của đoạn gộp. Ô thông báo ghi số kết quả OCR đã ổn định và số đoạn trùng được gộp. Các cờ bất định nội bộ không tự làm dòng đổi màu; bảng dùng các điều kiện màu nêu trên.
 
 Các cụm chữ cùng hàng nhưng cách xa nhau được tách trước khi lọc ngôn ngữ, tránh ghép biển chữ ở rìa ảnh vào phụ đề. Crop nhận diện tiếng Anh được thu sát nét chữ để giảm dao động khi hộp OCR thừa/thiếu viền. So sánh hình nét chữ dùng tương phản cục bộ, giúp ổn định khi nền chuyển cảnh hoặc chữ mờ dần.
 
 Hai đầu cùng chữ hoặc cùng trống vẫn có thể che giấu một câu/khoảng trống rất ngắn nằm hoàn toàn giữa hai mẫu. Bước quét 0,5 giây không bảo đảm tìm đủ câu ngắn hơn 0,5 giây. Mục tiêu 0,1 giây là độ rộng khoảng tìm biên, không phải cam kết OCR luôn đúng. Chữ mờ, hiệu ứng xuất hiện dần, karaoke, phụ đề đổi vị trí hoặc chữ trong cảnh giống sub vẫn cần kiểm tra lại.
 
-Khung có chữ phù hợp nhưng OCR điểm thấp được thử đọc lại; nếu chưa rõ, không tự coi là phụ đề biến mất. Các mục liên quan được đánh dấu xem lại. Tool có thể vẫn bỏ sót hoàn toàn một vùng chữ khó đọc. Mô hình Trung đi kèm không bảo đảm đọc tốt mọi chữ phồn thể/hiếm/font cách điệu.
+Khung có chữ phù hợp nhưng OCR điểm thấp được thử đọc lại; nếu chưa rõ, không tự coi là phụ đề biến mất. Tool có thể vẫn bỏ sót hoàn toàn một vùng chữ khó đọc. Mô hình Trung đi kèm không bảo đảm đọc tốt mọi chữ phồn thể/hiếm/font cách điệu.
 
 ## Kiểm tra
 
@@ -56,6 +65,7 @@ Video mẫu trong `test_artifacts/demo_dual.mp4`, `demo_zh.mp4`, `demo_en.mp4`. 
 .venv\Scripts\python.exe tests\integration.py
 .venv\Scripts\python.exe tests\gui_smoke.py
 .venv\Scripts\python.exe tests\gui_editing.py
+.venv\Scripts\python.exe tests\gui_review.py
 .venv\Scripts\python.exe tests\gui_layout.py
 ```
 
@@ -63,4 +73,4 @@ Kiểm tra OCR thật gồm hai ngôn ngữ, một dòng, nhiều dòng, câu l�
 
 ## Thành phần
 
-PySide6 Essentials, OpenCV, PyAV/FFmpeg, [RapidOCR](https://github.com/RapidAI/RapidOCR) và ONNX Runtime. Mô hình Trung/Anh PP-OCRv4 đi kèm `rapidocr-onnxruntime==1.4.4`; mô hình nhận diện tiếng Anh riêng trong `models/en_PP-OCRv4_rec_mobile.onnx`, nguồn [RapidAI](https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx). Các thành phần giữ giấy phép riêng của tác giả; xem kho nguồn và metadata trong môi trường trước khi phân phối lại.
+PySide6 Essentials, OpenCV, PyAV/FFmpeg, [RapidOCR](https://github.com/RapidAI/RapidOCR) và ONNX Runtime. Mô hình Trung/Anh PP-OCRv4 đi kèm `rapidocr-onnxruntime==1.4.4`; mô hình nhận diện tiếng Anh riêng trong `models/en_PP-OCRv4_rec_mobile.onnx`, nguồn [RapidAI](https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx). Từ điển tiếng Anh lấy từ [SymSpellPy](https://github.com/mammothb/symspellpy/blob/master/symspellpy/frequency_dictionary_en_82_765.txt), đóng gói sẵn; nguồn, hash và giấy phép trong `assets/dictionaries`. Không cần cài thêm thư viện hay dùng mạng để kiểm tra từ. Các thành phần giữ giấy phép riêng của tác giả; xem kho nguồn và metadata trong môi trường trước khi phân phối lại.

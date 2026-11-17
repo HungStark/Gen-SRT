@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .core import OcrEngine, Settings, write_srt, timestamp
 from .editing import parse_time, cue_errors, consecutive_rows, merge_cues
+from .review import EnglishSpellChecker, ACCEPTED_WORDS_PATH, accepted_words, review_rows, confidence_label
 from .video import extract, Cancelled, ScanStats
 
 
@@ -113,6 +114,30 @@ class VideoCanvas(QWidget):
             if self.roi[2] < 10 or self.roi[3] < 8:
                 self.roi = None
             self.roi_changed.emit()
+
+
+class VideoViewport(QWidget):
+    """Prefer full-width 16:9, fitting a smaller canvas on short windows."""
+    def __init__(self, canvas):
+        super().__init__()
+        self.canvas = canvas
+        canvas.setParent(self)
+        policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setMinimumSize(260, 147)
+
+    def sizeHint(self):
+        return QSize(520, self.heightForWidth(520))
+
+    def heightForWidth(self, width):
+        return round(width * 9 / 16)
+
+    def resizeEvent(self, event):
+        width = min(self.width(), round(self.height() * 16 / 9))
+        height = min(self.height(), round(width * 9 / 16))
+        self.canvas.setGeometry((self.width() - width) // 2, 0, width, height)
+        super().resizeEvent(event)
 
 
 class Worker(QThread):
@@ -235,6 +260,7 @@ class MainWindow(QMainWindow):
         self.preview_bands, self.preview_lines, self.cues, self.undo_stack = [], [], [], []
         self.selected_color = self.last_scan_stats = None
         self.result_language = 'zh'
+        self.spell_checker = EnglishSpellChecker()
         self._rendering = self.close_pending = False
 
         base = QWidget()
@@ -248,6 +274,7 @@ class MainWindow(QMainWindow):
         self.left_panel = QWidget()
         left = QVBoxLayout(self.left_panel)
         left.setContentsMargins(0, 0, 4, 0)
+        left.setSpacing(5)
         files = QHBoxLayout()
         self.open_button = QPushButton('Chọn video…')
         self.open_button.clicked.connect(self.choose_file)
@@ -262,7 +289,8 @@ class MainWindow(QMainWindow):
         self.canvas.open_requested.connect(self.choose_file)
         self.canvas.roi_changed.connect(self.invalidate_preview)
         self.canvas.color_picked.connect(self.pick_color)
-        left.addWidget(self.canvas, 3)
+        self.video_viewport = VideoViewport(self.canvas)
+        left.addWidget(self.video_viewport)
         hint = QLabel('Kéo chuột trái: khoanh vùng sub · Chuột phải trên chữ: chọn màu')
         hint.setWordWrap(True)
         hint.setObjectName('muted')
@@ -281,30 +309,36 @@ class MainWindow(QMainWindow):
         self.language.addItem('Tiếng Anh', 'en')
         self.language.setToolTip('Ngôn ngữ xuất SRT · mặc định tiếng Trung')
         self.language.currentIndexChanged.connect(self.invalidate_preview)
-        self.preview_button = QPushButton('Đọc thử\nkhung hình')
+        self.preview_button = QPushButton('Đọc thử khung hình')
         self.preview_button.clicked.connect(self.preview)
         self.run_button = QPushButton('Đọc cả video')
         self.run_button.setObjectName('primary')
         self.run_button.clicked.connect(self.run_video)
         for widget in (self.language, self.preview_button, self.run_button):
-            widget.setMinimumHeight(54)
+            widget.setMinimumHeight(34)
             controls.addWidget(widget, 1)
         left.addLayout(controls)
         self.preview_group = QGroupBox('Nội dung đọc thử')
+        self.preview_group.setObjectName('previewGroup')
+        self.preview_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         preview_layout = QVBoxLayout(self.preview_group)
+        preview_layout.setContentsMargins(6, 8, 6, 6)
+        preview_layout.setSpacing(4)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(60)
+        self.log.setMinimumHeight(48)
+        self.log.setMaximumHeight(68)
         self.log.setPlaceholderText('Nội dung đọc thử hiển thị ở đây.\n\nTua tới đoạn có sub, khoanh vùng chữ rồi bấm Đọc thử khung hình.')
         preview_layout.addWidget(self.log, 1)
         self.line_picker = QListWidget()
-        self.line_picker.setMaximumHeight(72)
+        self.line_picker.setMaximumHeight(44)
         self.line_picker.setWordWrap(True)
         self.line_picker.itemChanged.connect(self.select_bands)
         self.line_picker.setToolTip('Bỏ tích chữ trong cảnh; giữ các dòng phụ đề cần OCR.')
         self.line_picker.hide()
         preview_layout.addWidget(self.line_picker)
-        left.addWidget(self.preview_group, 2)
+        left.addWidget(self.preview_group)
+        left.addStretch(1)
         self.splitter.addWidget(self.left_panel)
 
         self.right_panel = QWidget()
@@ -386,7 +420,7 @@ class MainWindow(QMainWindow):
     def _build_options(self):
         self.options_dialog = QDialog(self)
         self.options_dialog.setWindowTitle('Tùy chọn OCR')
-        self.options_dialog.resize(440, 260)
+        self.options_dialog.resize(470, 450)
         layout = QVBoxLayout(self.options_dialog)
         self.lock_line = QCheckBox('Khóa vị trí dòng theo kết quả đọc thử')
         self.lock_line.setChecked(True)
@@ -413,10 +447,42 @@ class MainWindow(QMainWindow):
                              'Câu rất ngắn nằm giữa hai mẫu có thể bị bỏ sót.')
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
+        layout.addWidget(QLabel('Tên riêng / từ tiếng Anh được chấp nhận (mỗi dòng một tên):'))
+        self.accepted_words_edit = QPlainTextEdit()
+        self.accepted_words_edit.setMaximumHeight(90)
+        self.accepted_words_edit.setPlaceholderText('Ví dụ: Kunzi\nSeko Ai')
+        try:
+            self._saved_accepted_words = ACCEPTED_WORDS_PATH.read_text(encoding='utf-8-sig')
+        except OSError:
+            logging.exception('Cannot load accepted spelling words')
+            self._saved_accepted_words = ''
+        self.accepted_words_edit.setPlainText(self._saved_accepted_words)
+        self.spell_checker.accepted = accepted_words(self._saved_accepted_words)
+        layout.addWidget(self.accepted_words_edit)
+        spelling_hint = QLabel('Chỉ cảnh báo chính tả tiếng Anh, không tự sửa. '
+                              'Tên có chữ hoa giữa câu và chữ viết tắt được bỏ qua. '
+                              'Đỏ: <80% · Cam: nghi sai từ · Vàng: giống câu liền kề. '
+                              'Rê chuột lên dòng để xem lý do.')
+        spelling_hint.setWordWrap(True)
+        layout.addWidget(spelling_hint)
+        self.options_dialog.finished.connect(self.apply_accepted_words)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.button(QDialogButtonBox.Close).setText('Đóng')
         buttons.rejected.connect(self.options_dialog.reject)
         layout.addWidget(buttons)
+
+    def apply_accepted_words(self, *args):
+        text = self.accepted_words_edit.toPlainText()
+        self.spell_checker.accepted = accepted_words(text)
+        self.refresh_styles()
+        if text != self._saved_accepted_words:
+            try:
+                ACCEPTED_WORDS_PATH.write_text(text, encoding='utf-8')
+                self._saved_accepted_words = text
+            except OSError as error:
+                logging.exception('Cannot save accepted spelling words')
+                QMessageBox.warning(self, 'Không lưu được danh sách từ',
+                                    f'Danh sách vẫn áp dụng trong lần mở này.\n{error}')
 
     def invalidate_preview(self, *args):
         self.preview_bands, self.preview_lines = [], []
@@ -626,7 +692,9 @@ class MainWindow(QMainWindow):
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.cues))
         for row, cue in enumerate(self.cues):
-            values = [timestamp(cue.start), timestamp(cue.end), cue.text, 'Đã sửa' if cue.edited else f'{cue.confidence:.0%}']
+            # Avoid showing "80%" rounded up on a row that is actually <80%.
+            score = confidence_label(cue.confidence)
+            values = [timestamp(cue.start), timestamp(cue.end), cue.text, 'Đã sửa' if cue.edited else score]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if col == 3:
@@ -643,16 +711,20 @@ class MainWindow(QMainWindow):
     def refresh_styles(self):
         blocked = self.table.blockSignals(True)
         errors = cue_errors(self.cues)
-        for row, cue in enumerate(self.cues):
-            color = '#fff0ef' if row in errors else ('#fff7db' if cue.review else ('#edf6ff' if cue.edited else '#ffffff'))
+        reviews = review_rows(self.cues, self.spell_checker)
+        for row, (cue, review) in enumerate(zip(self.cues, reviews)):
+            reasons = [*review.reasons, f'Điểm OCR gốc: {confidence_label(cue.confidence, detailed=True)}.']
+            if cue.edited:
+                reasons.append('Nội dung hoặc thời gian đã được sửa thủ công.')
+            if row in errors:
+                reasons.append('Lỗi cần sửa trước khi xuất: ' + errors[row])
             for col in range(4):
                 item = self.table.item(row, col)
                 if item:
-                    item.setBackground(QColor(color))
-                    item.setToolTip(errors.get(row, 'Đã chỉnh sửa thủ công.' if cue.edited else ('OCR cần kiểm tra lại.' if cue.review else '')))
-            if self.table.item(row, 3):
-                self.table.item(row, 3).setToolTip(errors.get(row, f'Điểm OCR gốc: {cue.confidence:.0%}. ' + ('Nội dung hoặc thời gian đã được sửa.' if cue.edited else '')))
-        review_count = len(set(errors) | {row for row, cue in enumerate(self.cues) if cue.review})
+                    item.setBackground(QColor(review.color))
+                    item.setForeground(QColor('#b42318' if row in errors and col < 3 else '#203047'))
+                    item.setToolTip('\n'.join(reasons))
+        review_count = len(set(errors) | {row for row, review in enumerate(reviews) if review.level != 'none'})
         self.result_label.setText(f'Phụ đề · {len(self.cues)} đoạn' + (f' · {review_count} cần kiểm tra' if review_count else ''))
         self.table.blockSignals(blocked)
 
@@ -814,6 +886,7 @@ QComboBox, QDoubleSpinBox { background: white; padding: 5px; border: 1px solid #
 QPlainTextEdit, QListWidget, QTableWidget { background: white; border: 1px solid #d5dce6; border-radius: 3px; selection-background-color: #c8e3f5; selection-color: #172b42; }
 QGroupBox { border: 1px solid #d5dce6; border-radius: 5px; margin-top: 8px; padding: 10px 6px 6px; }
 QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #53657b; }
+QGroupBox#previewGroup { margin-top: 6px; padding: 6px 4px 4px; }
 QHeaderView::section { background: #edf2f8; padding: 8px 5px; border: none; border-bottom: 1px solid #d5dce6; font-weight: 600; }
 QTableWidget { gridline-color: #e8edf3; }
 QLabel#muted { color: #6a7b8f; font-size: 11px; }
