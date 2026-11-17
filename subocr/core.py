@@ -181,11 +181,21 @@ class Cue:
 
 
 class OcrEngine:
-    def __init__(self):
+    def __init__(self, use_cuda=False):
         from rapidocr_onnxruntime import RapidOCR
+        self.use_cuda = use_cuda
         self.engine = RapidOCR(intra_op_num_threads=4, inter_op_num_threads=1,
-                               det_limit_type='max', det_limit_side_len=1600, text_score=.1)
+                               det_limit_type='max', det_limit_side_len=1600, text_score=.1,
+                               det_use_cuda=use_cuda, rec_use_cuda=use_cuda)
         self.english = None
+        if use_cuda:
+            self._require_cuda(self.engine.text_det, 'phát hiện chữ')
+            self._require_cuda(self.engine.text_rec, 'nhận dạng chữ')
+
+    @staticmethod
+    def _require_cuda(component, name):
+        if component.session.session.get_providers()[0] != 'CUDAExecutionProvider':
+            raise RuntimeError(f'OCR {name} chưa dùng được GPU. Kiểm tra runtime GPU và CUDA/cuDNN trong notebook.')
 
     def read_english(self, image):
         if self.english is None:
@@ -193,9 +203,12 @@ class OcrEngine:
             model = Path(__file__).resolve().parents[1] / 'models' / 'en_PP-OCRv4_rec_mobile.onnx'
             if not model.is_file():
                 raise ValueError('Thiếu mô hình tiếng Anh. Chạy setup.bat để tải lại.')
-            self.english = TextRecognizer(dict(model_path=str(model), use_cuda=False, use_dml=False,
+            english = TextRecognizer(dict(model_path=str(model), use_cuda=self.use_cuda, use_dml=False,
                                                intra_op_num_threads=4, inter_op_num_threads=1,
                                                rec_img_shape=[3, 48, 320], rec_batch_num=6))
+            if self.use_cuda:
+                self._require_cuda(english, 'tiếng Anh')
+            self.english = english
         results, _ = self.english(image)
         return results[0]
 

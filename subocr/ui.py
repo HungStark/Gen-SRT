@@ -5,6 +5,7 @@ from dataclasses import replace
 import logging
 from pathlib import Path
 import threading
+import zipfile
 
 import cv2
 from PySide6.QtCore import Qt, QThread, Signal, QRectF, QSize, QEvent, QTimer
@@ -21,6 +22,7 @@ from .core import OcrEngine, Settings, write_srt, timestamp
 from .editing import parse_time, cue_errors, consecutive_rows, merge_cues
 from .review import EnglishSpellChecker, ACCEPTED_WORDS_PATH, accepted_words, review_rows, confidence_label
 from .video import extract, Cancelled, ScanStats
+from .colab import export_bundle, load_result
 
 
 class VideoCanvas(QWidget):
@@ -284,6 +286,15 @@ class MainWindow(QMainWindow):
         files.addWidget(self.file_label, 1)
         self.options_button = QPushButton('Tùy chọn…')
         files.addWidget(self.options_button)
+        self.colab_button = QPushButton('Colab GPU')
+        colab_menu = QMenu(self.colab_button)
+        self.colab_export_action = colab_menu.addAction('1. Xuất gói chạy Colab…')
+        self.colab_export_action.triggered.connect(self.export_colab)
+        self.colab_import_action = colab_menu.addAction('2. Nhập kết quả Colab…')
+        self.colab_import_action.triggered.connect(self.import_colab)
+        self.colab_button.setMenu(colab_menu)
+        self.colab_button.setToolTip('Quét trên Colab, sau đó mang kết quả về chỉnh sửa trong app.')
+        files.addWidget(self.colab_button)
         left.addLayout(files)
         self.canvas = VideoCanvas()
         self.canvas.open_requested.connect(self.choose_file)
@@ -413,7 +424,7 @@ class MainWindow(QMainWindow):
         self.undo_shortcut.setContext(Qt.WidgetShortcut)
         self.undo_shortcut.activated.connect(self.undo)
         self.job_controls = [self.open_button, self.options_button, self.canvas, self.slider,
-                             self.language, self.preview_button, self.run_button]
+                             self.language, self.preview_button, self.run_button, self.colab_button]
         self.statusBar().showMessage('Quét 0,5 giây · chia đôi mốc đổi câu đến khoảng 0,1 giây')
         self.update_actions()
 
@@ -589,6 +600,70 @@ class MainWindow(QMainWindow):
             return
         self.commit_editor()
         self.start_job('video', self.video_path, cfg)
+
+    def export_colab(self):
+        if self.worker is not None:
+            return
+        try:
+            cfg = self.settings()
+            if self.lock_line.isChecked() and not self.preview_bands:
+                raise ValueError('Đọc thử để khóa dòng, hoặc tắt khóa dòng trong Tùy chọn trước khi xuất gói.')
+        except ValueError as error:
+            QMessageBox.information(self, 'Cần chọn vùng phụ đề', str(error))
+            return
+        parent = QFileDialog.getExistingDirectory(self, 'Chọn nơi lưu gói Colab')
+        if not parent:
+            return
+        try:
+            h, w = self.canvas.frame.shape[:2]
+            folder = export_bundle(parent, self.video_path, cfg, w, h, self.duration)
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            QMessageBox.warning(self, 'Không xuất được gói Colab', str(error))
+            return
+        self.log.setPlainText(f'Gói Colab: {folder}\n'
+                              'Mở SubLens_Colab.ipynb trên colab.research.google.com, chọn runtime GPU.\n'
+                              'Chạy các ô, tải job.zip và chọn video gốc (từ Drive hoặc tải lên).\n'
+                              'Tải result.sublens.json rồi chọn Colab GPU → Nhập kết quả Colab.')
+        self.statusBar().showMessage(f'Đã xuất gói Colab: {folder}')
+        QMessageBox.information(self, 'Đã xuất gói Colab',
+                                f'Đã lưu tại:\n{folder}\n\n'
+                                '1. Mở colab.research.google.com → Upload notebook → SubLens_Colab.ipynb.\n'
+                                '2. Chọn Runtime → Change runtime type → GPU, chạy các ô theo thứ tự.\n'
+                                '3. Tải job.zip và chọn video gốc theo hướng dẫn trong notebook.\n'
+                                '4. Tải result.sublens.json rồi nhập về qua menu Colab GPU.\n\n'
+                                'Gói không chứa video. Khi dùng Colab, video sẽ được xử lý trên máy chủ Google.')
+
+    def import_colab(self):
+        if self.worker is not None:
+            return
+        if not self.video_path:
+            QMessageBox.information(self, 'Cần mở video', 'Mở video gốc trước khi nhập kết quả Colab.')
+            return
+        path, _ = QFileDialog.getOpenFileName(self, 'Nhập kết quả Colab', '',
+                                             'Kết quả SubLens (*.sublens.json);;JSON (*.json)')
+        if not path:
+            return
+        try:
+            cfg, cues, stats, device = load_result(path, self.video_path)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Không nhập được kết quả Colab', str(error))
+            return
+        self.commit_editor()
+        if self.cues and QMessageBox.question(self, 'Thay kết quả hiện tại?',
+                                              'Nhập kết quả Colab sẽ thay danh sách phụ đề đang sửa. Tiếp tục?',
+                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.cues, self.undo_stack = cues, []
+        self.result_language = cfg.language
+        self.last_scan_stats = stats
+        self.fill_table()
+        self.progress_bar.setRange(0, 1000)
+        self.progress_bar.setValue(1000)
+        self.log.setPlainText(f'Đã nhập {len(cues)} đoạn từ kết quả Colab ({device.upper()}).\n'
+                              f'OCR {stats.ocr_calls} lần · {stats.elapsed:.1f} giây. '
+                              'Chỉnh sửa bảng bên phải rồi xuất SRT.'
+                              + ('\nKhông tìm thấy sub phù hợp. Kiểm tra vùng chọn và ngôn ngữ.' if not cues else ''))
+        self.statusBar().showMessage('Đã nhập kết quả Colab. Có thể sửa chữ, xóa, gộp và xuất SRT.')
 
     def start_job(self, mode, source, cfg):
         if self.worker is not None:

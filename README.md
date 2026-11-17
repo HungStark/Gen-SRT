@@ -8,6 +8,27 @@ Môi trường đã được cài trong thư mục dự án. Bấm đúp **`star
 
 Khi cần cài lại, cài [uv](https://docs.astral.sh/uv/getting-started/installation/), rồi chạy `setup.bat`. Python 3.12, thư viện và mô hình được tải vào thư mục dự án. Cần mạng lúc cài; sau đó OCR chạy cục bộ. Nếu di chuyển thư mục sang đường dẫn khác, hãy tạo lại môi trường bằng setup.
 
+## Luồng riêng: quét bằng GPU Colab
+
+Luồng cục bộ qua `app.py` / `start.bat` và nút **Đọc cả video** vẫn chạy CPU trên máy như trước. Colab là một lựa chọn riêng trong menu **Colab GPU** ở hàng chọn video.
+
+1. Mở video, khoanh vùng, chọn ngôn ngữ và tùy chọn như bình thường. Nếu bật khóa dòng, đọc thử trước; hoặc tắt khóa dòng trong Tùy chọn.
+2. Chọn **Colab GPU → 1. Xuất gói chạy Colab…**, chọn thư mục lưu. App tạo thư mục `SubLens_Colab_<mã>` có `job.zip`, `SubLens_Colab.ipynb` và `HUONG_DAN.txt`. Gói chứa mã quét, cấu hình và mô hình tiếng Anh nếu cần; video tải riêng.
+3. Mở [Google Colab](https://colab.research.google.com/), chọn **Upload notebook**, mở `SubLens_Colab.ipynb`. Chọn **Runtime → Change runtime type → GPU** rồi chạy các ô theo thứ tự.
+4. Ô 2 tải `job.zip`. Ô 3 chọn video gốc từ Google Drive hoặc tải lên; nên dùng Drive cho video lớn. Không cắt/chuyển mã video sau khi xuất gói. Notebook kiểm tra dung lượng và dấu vân tay lấy mẫu đầu/giữa/cuối tệp, cho phép đổi tên tệp.
+5. Ô 4 chạy OCR bằng CUDA, hiển thị tiến trình. Mặc định sao chép video Drive sang ổ tạm trước khi quét và lưu kết quả vào `MyDrive/SubLens/<mã tác vụ>/`. Có thể tắt hai tùy chọn này trong notebook. Ô 5 tải `result.sublens.json` về máy; bản SRT cũng có trong thư mục kết quả.
+6. Trong app, mở đúng video gốc rồi chọn **Colab GPU → 2. Nhập kết quả Colab…**. Nội dung, thời gian và độ tin cậy được đưa vào bảng để sửa/xóa/gộp/hoàn tác và xuất SRT. App từ chối kết quả sai video hoặc sai định dạng, hỏi trước khi thay danh sách đang có.
+
+Colab xử lý video trên máy chủ Google. Lần đầu cần mạng để cài thư viện. Notebook cài riêng ONNX Runtime GPU 1.23.2 cùng thư viện CUDA/cuDNN và kiểm tra CUDA trên các phiên OCR thực tế; không tự chuyển sang CPU khi GPU lỗi. Việc cài thư viện trong Colab không thay đổi môi trường Windows. Xem [tài liệu CUDA của ONNX Runtime](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html).
+
+GPU và thời lượng phiên Colab không được bảo đảm; giữ notebook mở và tải/lưu kết quả trước khi ngắt phiên. Bản này chạy theo từng video, chưa tiếp tục được một lượt quét bị ngắt. Tổng thời gian còn phụ thuộc tải video, giải mã và khởi tạo GPU; chưa có số đo tăng tốc trên Colab. Xem [giới hạn Colab](https://research.google.com/colaboratory/faq.html).
+
+Notebook nguồn nằm trong `colab/SubLens_Colab.ipynb`; có thể tái tạo bằng `.venv\Scripts\python.exe colab\build_notebook.py`. Để kiểm tra toàn luồng bằng CPU cục bộ (không thay chế độ mặc định của notebook):
+
+```powershell
+.venv\Scripts\python.exe tests\gui_colab.py
+```
+
 ## Bố cục và cách quét
 
 - **Bên trái:** khung video tỷ lệ 16:9, thanh tua, hàng nút gọn và nội dung đọc thử. Khung video ưu tiên dùng hết chiều ngang; khi cửa sổ thấp, tự thu nhỏ để vẫn thấy các nút. Video giữ tỷ lệ gốc bên trong khung, không kéo méo. Ô đọc thử/danh sách dòng có thanh cuộn khi nội dung dài.
