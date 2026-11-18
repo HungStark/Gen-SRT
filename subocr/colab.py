@@ -22,6 +22,10 @@ SOURCE_FILES = ('subocr/__init__.py', 'subocr/core.py', 'subocr/video.py',
 EN_MODEL = 'models/en_PP-OCRv4_rec_mobile.onnx'
 
 
+class VideoMismatchError(ValueError):
+    pass
+
+
 def write_json(path, data):
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
 
@@ -34,6 +38,29 @@ def read_json(path):
         return json.loads(path.read_text(encoding='utf-8-sig'))
     except (UnicodeError, json.JSONDecodeError) as error:
         raise ValueError('Tệp JSON không hợp lệ.') from error
+
+
+def read_result_data(path):
+    """Read either the result JSON or the download ZIP without extracting files."""
+    path = Path(path)
+    if path.suffix.lower() != '.zip':
+        return read_json(path)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            results = [info for info in archive.infolist()
+                       if not info.is_dir() and info.filename.lower().endswith('.sublens.json')]
+            if not results:
+                if 'job.json' in archive.namelist():
+                    raise ValueError('Đây là gói dùng để chạy OCR. Chọn ZIP kết quả tải từ ô 5, hoặc tệp result.sublens.json bên trong.')
+                raise ValueError('ZIP không chứa tệp kết quả .sublens.json. Chọn ZIP tải từ ô 5 trên Colab.')
+            if len(results) != 1:
+                raise ValueError('ZIP có nhiều tệp JSON kết quả. Giải nén và chọn JSON của video cần nhập.')
+            info = results[0]
+            if info.file_size > 64 * 1024 * 1024:
+                raise ValueError('Tệp JSON trong ZIP quá lớn (tối đa 64 MB).')
+            return json.loads(archive.read(info).decode('utf-8-sig'))
+    except (zipfile.BadZipFile, UnicodeError, json.JSONDecodeError, RuntimeError, NotImplementedError) as error:
+        raise ValueError('Không đọc được ZIP kết quả. Hãy tải lại từ ô 5 hoặc giải nén và chọn tệp JSON.') from error
 
 
 def video_identity(path):
@@ -118,7 +145,7 @@ def verify_video(job, path):
         return actual
     actual = video_identity(path)
     if any(actual[key] != job['video'][key] for key in actual):
-        raise ValueError('Video không khớp gói Colab. Chọn đúng tệp gốc, chưa cắt hoặc chuyển mã.')
+        raise VideoMismatchError('Video không khớp gói Colab. Chọn đúng tệp gốc, chưa cắt hoặc chuyển mã.')
 
 
 def video_metadata(path):
@@ -175,7 +202,7 @@ def export_bundle(parent, video_path, cfg, width, height, duration, reusable=Fal
                'Sau mỗi video, tải kết quả ở ô 5 rồi quay lại ô 3 chọn video tiếp theo; không cần tải lại gói.\n'
                if reusable else f'Video gốc: {video_path.name}\n') +
             '4. Nhập tên video ở ô 2. Ô 4 lưu kết quả vào MyDrive/SubLens/<tên video> nếu bật lưu Drive.\n'
-            '5. Ô 5 tải ZIP gồm JSON và SRT; giải nén rồi mở đúng video trong app, chọn Colab GPU > Nhập kết quả.\n'
+            '5. Ô 5 tải ZIP gồm JSON và SRT; mở đúng video trong app, chọn Colab GPU > Nhập kết quả rồi chọn ZIP hoặc JSON.\n'
             'Gói không chứa video. Video sẽ được xử lý trên máy chủ Google khi bạn tải/chọn nó.\n'
             'Giữ notebook mở khi chạy. Colab có thể ngắt phiên; lưu kết quả về Drive nếu cần.\n',
             encoding='utf-8-sig')
@@ -233,7 +260,13 @@ def validate_result(data):
 
 
 def load_result(path, video_path):
-    data = read_json(path)
+    data = read_result_data(path)
     cfg, cues, stats = validate_result(data)
-    verify_video(data['job'], video_path)
+    try:
+        verify_video(data['job'], video_path)
+    except VideoMismatchError as error:
+        raise ValueError(f'Kết quả được tạo từ video: {data["job"]["video"]["name"]}\n'
+                         f'Video đang mở: {Path(video_path).name}\n'
+                         'Dữ liệu video không khớp. Mở đúng tệp đã đưa lên Colab, chưa cắt hoặc chuyển mã. '
+                         'Tên thư mục kết quả chỉ để đặt tên; đổi tên tệp không ảnh hưởng việc đối chiếu.') from error
     return cfg, cues, stats, data['device']

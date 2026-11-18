@@ -112,6 +112,10 @@ def run():
                         '--output', str(result_dir), '--cpu'], cwd=extracted, check=True)
         result = result_dir / 'result.sublens.json'
         assert len(load_result(result, source)[1]) == 3
+        download = result_dir / f'episode_{index}.zip'
+        with zipfile.ZipFile(download, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.write(result, f'Custom title {index}/result.sublens.json')
+            archive.write(result_dir / 'result.en.srt', f'Custom title {index}/result.en.srt')
         other = second if index == 0 else video
         try:
             load_result(result, other)
@@ -120,7 +124,7 @@ def run():
         else:
             raise AssertionError('Reusable job result accepted the wrong episode')
         window.open_video(source)
-        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(result), '')):
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(download), '')):
             window.import_colab()
         assert len(window.cues) == 3
     for width, height in ((760, 560), (1240, 800)):

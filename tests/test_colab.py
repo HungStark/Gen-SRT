@@ -191,8 +191,17 @@ class ColabTests(unittest.TestCase):
         # Past the template video's end: validation must use the scanned video's duration.
         write_result(path, two, [Cue(1.5, 1.9, 'Second episode', .9)], ScanStats(), 'cpu')
         self.assertEqual(load_result(path, second)[1][0].text, 'Second episode')
+        download = self.root / 'Tên tự đặt.zip'
+        with zipfile.ZipFile(download, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.write(path, 'Tên tự đặt/result.sublens.json')
+            archive.writestr('Tên tự đặt/result.en.srt', 'subtitle')
+        self.assertEqual(load_result(download, second)[1][0].text, 'Second episode')
         with self.assertRaisesRegex(ValueError, 'khớp'):
             load_result(path, sample)
+        with self.assertRaisesRegex(ValueError, 'khớp') as mismatch:
+            load_result(download, sample)
+        self.assertIn('episode 2.mp4', str(mismatch.exception))
+        self.assertIn('episode 1.mp4', str(mismatch.exception))
         with self.assertRaisesRegex(ValueError, 'chưa gắn'):
             write_result(path, template, [], ScanStats(), 'cpu')
 
@@ -205,6 +214,20 @@ class ColabTests(unittest.TestCase):
         template['reusable'] = 'true'
         with self.assertRaises(ValueError):
             validate_job(template)
+
+    def test_result_import_distinguishes_job_zip_corrupt_zip_and_multiple_results(self):
+        with self.assertRaisesRegex(ValueError, 'gói dùng để chạy OCR'):
+            load_result(self.folder / 'sublens_colab_video.zip', self.video)
+        broken = self.root / 'broken.zip'
+        broken.write_bytes(b'not a zip')
+        with self.assertRaisesRegex(ValueError, 'Không đọc được ZIP'):
+            load_result(broken, self.video)
+        ambiguous = self.root / 'two_videos.zip'
+        with zipfile.ZipFile(ambiguous, 'w') as archive:
+            archive.writestr('one/result.sublens.json', '{}')
+            archive.writestr('two/result.sublens.json', '{}')
+        with self.assertRaisesRegex(ValueError, 'nhiều tệp JSON'):
+            load_result(ambiguous, self.video)
 
 
 if __name__ == '__main__':
