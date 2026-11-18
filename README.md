@@ -50,7 +50,7 @@ Notebook nguồn nằm trong `colab/SubLens_Colab.ipynb`; có thể tái tạo b
 5. Bấm **Đọc cả video**. Tool quét mỗi **0,5 giây**, dùng lại kết quả OCR và chia đôi các khoảng đổi câu đến khoảng **0,1 giây**.
 6. Kiểm tra, chỉnh sửa bảng bên phải rồi bấm **Xuất SRT…**. Tên mặc định `video.zh.srt` hoặc `video.en.srt`, mã hóa UTF-8 có BOM. Chỉ ghi tệp khi bạn xuất.
 
-Trong **Tùy chọn…** có khóa dòng theo kết quả đọc thử, ngưỡng tin cậy OCR và lọc màu. Muốn chọn màu, bấm chuột phải vào phần màu đặc bên trong nét chữ trên video; tránh viền đen và nền. Nếu câu có thể xuống hai dòng, đọc thử ở đoạn có đủ hai dòng trước khi khóa. Nếu sub đổi vị trí hoặc màu, điều chỉnh/tắt bộ lọc tương ứng.
+Trong **Tùy chọn…** có khóa dòng theo kết quả đọc thử, ngưỡng tin cậy OCR và lọc màu. Bấm **Chọn màu…** cạnh **Lọc theo màu mẫu** để mở bảng màu hoặc nhập mã HEX/RGB; màu đã chọn hiện bằng ô màu và mã HEX. Chọn màu sẽ tự bật bộ lọc. Cũng có thể bấm chuột phải vào phần màu đặc bên trong nét chữ trên video để lấy mẫu; tránh viền đen và nền. Nếu câu có thể xuống hai dòng, đọc thử ở đoạn có đủ hai dòng trước khi khóa. Nếu sub đổi vị trí hoặc màu, điều chỉnh/tắt bộ lọc tương ứng.
 
 ## Sửa, xóa và gộp kết quả
 

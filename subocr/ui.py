@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QComboBox, QCheckBox, QDoubleSpinBox, QSlider, QProgressBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QSizePolicy,
     QPlainTextEdit, QGroupBox, QAbstractItemView, QListWidget, QListWidgetItem,
-    QSplitter, QDialog, QDialogButtonBox, QStyledItemDelegate, QMenu,
+    QSplitter, QDialog, QDialogButtonBox, QStyledItemDelegate, QMenu, QColorDialog,
 )
 
 from .core import OcrEngine, Settings, write_srt, timestamp
@@ -454,11 +454,20 @@ class MainWindow(QMainWindow):
         self.color_check = QCheckBox('Lọc theo màu mẫu')
         self.color_check.toggled.connect(self.invalidate_preview)
         colors.addWidget(self.color_check)
+        self.color_swatch = QLabel()
+        self.color_swatch.setFixedSize(22, 22)
+        colors.addWidget(self.color_swatch)
         self.color_label = QLabel('Chưa chọn màu')
         colors.addWidget(self.color_label)
+        self.choose_color_button = QPushButton('Chọn màu…')
+        self.choose_color_button.clicked.connect(self.choose_color)
+        self.choose_color_button.setToolTip('Chọn màu chữ từ bảng màu hoặc nhập mã màu HEX/RGB.')
+        colors.addWidget(self.choose_color_button)
+        self.update_color_display()
         colors.addStretch()
         layout.addLayout(colors)
-        explanation = QLabel('Bấm chuột phải vào phần màu đặc của nét chữ trên video để lấy mẫu.\n\n'
+        explanation = QLabel('Bấm Chọn màu… để chọn từ bảng màu hoặc nhập mã màu; '
+                             'cũng có thể bấm chuột phải vào phần màu đặc của nét chữ trên video để lấy mẫu.\n\n'
                              'Quét cố định mỗi 0,5 giây, chia đôi khi đổi chữ đến khoảng 0,1 giây. '
                              'Câu rất ngắn nằm giữa hai mẫu có thể bị bỏ sót.')
         explanation.setWordWrap(True)
@@ -524,10 +533,24 @@ class MainWindow(QMainWindow):
 
     def pick_color(self, color):
         self.selected_color = color
-        self.color_label.setText('#%02X%02X%02X' % color)
+        self.update_color_display()
         self.color_check.setChecked(True)
         self.invalidate_preview()
         self.statusBar().showMessage('Đã lấy màu chữ mẫu. Có thể tắt lọc màu trong Tùy chọn.')
+
+    def update_color_display(self):
+        name = '#%02X%02X%02X' % self.selected_color if self.selected_color is not None else None
+        self.color_label.setText(name or 'Chưa chọn màu')
+        self.color_swatch.setStyleSheet(f'background-color: {name or "transparent"}; '
+                                       'border: 1px solid #8fa0b4; border-radius: 3px;')
+        self.color_swatch.setToolTip(name or 'Chưa chọn màu chữ')
+
+    def choose_color(self):
+        initial = QColor(*self.selected_color) if self.selected_color is not None else QColor(255, 255, 255)
+        color = QColorDialog.getColor(initial, self.options_dialog, 'Chọn màu chữ phụ đề',
+                                     QColorDialog.DontUseNativeDialog)
+        if color.isValid():
+            self.pick_color((color.red(), color.green(), color.blue()))
 
     def choose_file(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Mở video', '', 'Video (*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.ts);;Tất cả (*)')
@@ -560,7 +583,7 @@ class MainWindow(QMainWindow):
         self.fill_table()
         self.selected_color = None
         self.color_check.setChecked(False)
-        self.color_label.setText('Chưa chọn màu')
+        self.update_color_display()
         self.file_label.setText(Path(path).name)
         self.file_label.setToolTip(self.video_path)
         self.log.setPlainText('Tua đến đoạn có sub và kéo chuột khoanh sát vùng chữ. Sau đó bấm Đọc thử khung hình.')
@@ -580,7 +603,7 @@ class MainWindow(QMainWindow):
         if self.canvas.frame is None or not self.canvas.roi:
             raise ValueError('Mở video rồi kéo chọn vùng có phụ đề.')
         if self.color_check.isChecked() and self.selected_color is None:
-            raise ValueError('Bấm chuột phải lên nét chữ để chọn màu, hoặc tắt lọc màu trong Tùy chọn.')
+            raise ValueError('Bấm Chọn màu… trong Tùy chọn hoặc chuột phải lên nét chữ để chọn màu; hoặc tắt lọc màu.')
         return Settings(self.canvas.roi, self.language.currentData(), interval=.5,
                         confidence=self.confidence.value(),
                         line_bands=copy.deepcopy(self.preview_bands) if use_bands and self.lock_line.isChecked() else [],
