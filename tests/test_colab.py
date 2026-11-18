@@ -9,9 +9,10 @@ from unittest.mock import patch
 import zipfile
 
 import numpy as np
+import cv2
 
 from subocr.colab import (ROOT, export_bundle, load_result, read_json, validate_job,
-                         validate_result, verify_video, video_identity, write_result)
+                         validate_result, verify_video, video_identity, write_result, bind_video_job)
 from subocr.core import Cue, OcrEngine, Settings
 from subocr.video import ScanStats
 
@@ -25,7 +26,7 @@ class ColabTests(unittest.TestCase):
         self.video.write_bytes(b'sample video bytes')
         self.cfg = Settings((10, 70, 300, 20), 'en', color=(255, 255, 255), line_bands=[(.5, .3)])
         self.folder = export_bundle(self.root, self.video, self.cfg, 320, 100, 4.8)
-        with zipfile.ZipFile(self.folder / 'job.zip') as archive:
+        with zipfile.ZipFile(self.folder / 'sublens_colab_video.zip') as archive:
             self.names = archive.namelist()
             self.job = json.loads(archive.read('job.json'))
 
@@ -36,7 +37,7 @@ class ColabTests(unittest.TestCase):
         self.assertNotIn('subocr/ui.py', self.names)
         self.assertNotIn(self.video.name, self.names)
         self.assertTrue((self.folder / 'SubLens_Colab.ipynb').is_file())
-        with zipfile.ZipFile(self.folder / 'job.zip') as archive:
+        with zipfile.ZipFile(self.folder / 'sublens_colab_video.zip') as archive:
             for name in self.names:
                 self.assertFalse(Path(name).is_absolute())
                 self.assertNotIn('..', Path(name).parts)
@@ -85,7 +86,7 @@ class ColabTests(unittest.TestCase):
         cfg.confidence = np.float32(.6)
         cfg.color = tuple(np.uint8(255) for _ in range(3))
         folder = export_bundle(self.root, self.video, cfg, 320, 100, 4.8)
-        with zipfile.ZipFile(folder / 'job.zip') as archive:
+        with zipfile.ZipFile(folder / 'sublens_colab_video.zip') as archive:
             job = json.loads(archive.read('job.json'))
         loaded = validate_job(job)
         self.assertEqual(loaded.line_bands, [(0.85, 0.2)])
@@ -155,8 +156,55 @@ class ColabTests(unittest.TestCase):
 
     def test_chinese_bundle_omits_optional_model(self):
         folder = export_bundle(self.root, self.video, Settings((0, 70, 320, 30)), 320, 100, 4.8)
-        with zipfile.ZipFile(folder / 'job.zip') as archive:
+        with zipfile.ZipFile(folder / 'sublens_colab_video.zip') as archive:
             self.assertNotIn('models/en_PP-OCRv4_rec_mobile.onnx', archive.namelist())
+
+    def make_video(self, name, size=(320, 100), count=5, color=0):
+        path = self.root / name
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'mp4v'), 10, size)
+        self.assertTrue(writer.isOpened())
+        try:
+            for _ in range(count):
+                writer.write(np.full((size[1], size[0], 3), color, dtype=np.uint8))
+        finally:
+            writer.release()
+        return path
+
+    def test_reusable_bundle_binds_each_result_to_its_actual_video(self):
+        sample = self.make_video('episode 1.mp4', count=5)
+        second = self.make_video('episode 2.mp4', count=20, color=100)
+        folder = export_bundle(self.root, sample, self.cfg, 320, 100, .5, reusable=True)
+        with zipfile.ZipFile(folder / 'sublens_colab_episode 1.zip') as archive:
+            template = json.loads(archive.read('job.json'))
+        before = copy.deepcopy(template)
+        self.assertTrue(template['reusable'])
+        verify_video(template, second)
+        one, two = bind_video_job(template, sample), bind_video_job(template, second)
+        self.assertEqual(template, before)
+        self.assertFalse(two['reusable'])
+        self.assertNotEqual(one['job_id'], two['job_id'])
+        self.assertEqual(two['video']['name'], second.name)
+        self.assertEqual(two['video']['sample_sha256'], video_identity(second)['sample_sha256'])
+        self.assertAlmostEqual(two['video']['duration'], 2.)
+        self.assertEqual(two['settings'], template['settings'])
+        path = self.root / 'episode2.sublens.json'
+        # Past the template video's end: validation must use the scanned video's duration.
+        write_result(path, two, [Cue(1.5, 1.9, 'Second episode', .9)], ScanStats(), 'cpu')
+        self.assertEqual(load_result(path, second)[1][0].text, 'Second episode')
+        with self.assertRaisesRegex(ValueError, 'khớp'):
+            load_result(path, sample)
+        with self.assertRaisesRegex(ValueError, 'chưa gắn'):
+            write_result(path, template, [], ScanStats(), 'cpu')
+
+    def test_reusable_bundle_rejects_other_dimensions_and_invalid_mode(self):
+        template = copy.deepcopy(self.job)
+        template['reusable'] = True
+        other_size = self.make_video('wrong_size.mp4', size=(640, 200))
+        with self.assertRaisesRegex(ValueError, '320.*100'):
+            bind_video_job(template, other_size)
+        template['reusable'] = 'true'
+        with self.assertRaises(ValueError):
+            validate_job(template)
 
 
 if __name__ == '__main__':

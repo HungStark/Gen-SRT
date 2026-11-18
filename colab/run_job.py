@@ -9,15 +9,14 @@ from time import monotonic
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from subocr.colab import read_json, validate_job, verify_video, write_result
+from subocr.colab import read_json, validate_job, bind_video_job, write_result
 from subocr.core import OcrEngine, write_srt
 from subocr.video import extract, ScanStats
 
 
 def run(job_path, video_path, output_dir, use_cuda=True):
-    job = read_json(job_path)
+    job = bind_video_job(read_json(job_path), video_path)
     cfg = validate_job(job)
-    verify_video(job, video_path)
     if use_cuda:
         import onnxruntime as ort
         # Load the CUDA 12 / cuDNN 9 libraries installed by the notebook.

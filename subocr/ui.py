@@ -291,6 +291,8 @@ class MainWindow(QMainWindow):
         colab_menu.setObjectName('colabMenu')
         self.colab_export_action = colab_menu.addAction('1. Xuất gói chạy Colab…')
         self.colab_export_action.triggered.connect(self.export_colab)
+        self.colab_reusable_action = colab_menu.addAction('Xuất gói dùng cho nhiều video…')
+        self.colab_reusable_action.triggered.connect(lambda: self.export_colab(reusable=True))
         self.colab_import_action = colab_menu.addAction('2. Nhập kết quả Colab…')
         self.colab_import_action.triggered.connect(self.import_colab)
         self.colab_button.setMenu(colab_menu)
@@ -604,7 +606,7 @@ class MainWindow(QMainWindow):
         self.commit_editor()
         self.start_job('video', self.video_path, cfg)
 
-    def export_colab(self):
+    def export_colab(self, reusable=False):
         if self.worker is not None:
             return
         try:
@@ -619,20 +621,22 @@ class MainWindow(QMainWindow):
             return
         try:
             h, w = self.canvas.frame.shape[:2]
-            folder = export_bundle(parent, self.video_path, cfg, w, h, self.duration)
+            folder = export_bundle(parent, self.video_path, cfg, w, h, self.duration, reusable=reusable)
         except (OSError, ValueError, zipfile.BadZipFile) as error:
             QMessageBox.warning(self, 'Không xuất được gói Colab', str(error))
             return
-        self.log.setPlainText(f'Gói Colab: {folder}\n'
+        mode_hint = (f'Gói dùng lại cho các video {w} × {h}, cùng vùng sub/ngôn ngữ/bộ lọc. '
+                     'Sau khi tải kết quả, quay lại ô 3 chọn video tiếp theo.\n' if reusable else '')
+        self.log.setPlainText(f'Gói Colab: {folder}\n' + mode_hint +
                               'Mở SubLens_Colab.ipynb trên colab.research.google.com, chọn runtime GPU.\n'
-                              'Chạy các ô, tải job.zip và chọn video gốc (từ Drive hoặc tải lên).\n'
+                              f'Chạy các ô, tải sublens_colab_{Path(self.video_path).stem}.zip và chọn video gốc (từ Drive hoặc tải lên).\n'
                               'Tải result.sublens.json rồi chọn Colab GPU → Nhập kết quả Colab.')
         self.statusBar().showMessage(f'Đã xuất gói Colab: {folder}')
         QMessageBox.information(self, 'Đã xuất gói Colab',
-                                f'Đã lưu tại:\n{folder}\n\n'
+                                f'Đã lưu tại:\n{folder}\n\n' + mode_hint +
                                 '1. Mở colab.research.google.com → Upload notebook → SubLens_Colab.ipynb.\n'
                                 '2. Chọn Runtime → Change runtime type → GPU, chạy các ô theo thứ tự.\n'
-                                '3. Tải job.zip và chọn video gốc theo hướng dẫn trong notebook.\n'
+                                f'3. Tải sublens_colab_{Path(self.video_path).stem}.zip và chọn video gốc theo hướng dẫn trong notebook.\n'
                                 '4. Tải result.sublens.json rồi nhập về qua menu Colab GPU.\n\n'
                                 'Gói không chứa video. Khi dùng Colab, video sẽ được xử lý trên máy chủ Google.')
 

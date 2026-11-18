@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, fields
+import copy
 import hashlib
 import json
 import math
@@ -61,6 +62,8 @@ def validate_job(data):
         raise ValueError('Gói Colab không đúng định dạng hoặc phiên bản.')
     if not isinstance(data.get('job_id'), str) or not data['job_id']:
         raise ValueError('Thiếu mã tác vụ Colab.')
+    if type(data.get('reusable', False)) is not bool:
+        raise ValueError('Chế độ dùng lại gói Colab không hợp lệ.')
     video = data.get('video')
     if not isinstance(video, dict) or not isinstance(video.get('name'), str):
         raise ValueError('Thiếu thông tin video.')
@@ -106,16 +109,47 @@ def validate_job(data):
 
 def verify_video(job, path):
     validate_job(job)
+    if job.get('reusable', False):
+        actual = video_metadata(path)
+        if any(actual[key] != job['video'][key] for key in ('width', 'height')):
+            raise ValueError(f'Gói dùng lại cần video {job["video"]["width"]} × {job["video"]["height"]}. '
+                             f'Video đã chọn là {actual["width"]} × {actual["height"]}. '
+                             'Xuất gói khác với vùng phụ đề phù hợp kích thước mới.')
+        return actual
     actual = video_identity(path)
     if any(actual[key] != job['video'][key] for key in actual):
         raise ValueError('Video không khớp gói Colab. Chọn đúng tệp gốc, chưa cắt hoặc chuyển mã.')
 
 
-def export_bundle(parent, video_path, cfg, width, height, duration):
+def video_metadata(path):
+    import av
+    path = Path(path)
+    with av.open(str(path)) as container:
+        if not container.streams.video:
+            raise ValueError('Tệp không có luồng video.')
+        stream = container.streams.video[0]
+        duration = float(stream.duration * stream.time_base) if stream.duration else (container.duration or 0) / 1e6
+        if duration <= 0:
+            raise ValueError('Không xác định được thời lượng video. Hãy thử chuyển sang MP4.')
+        metadata = {'name': path.name, 'width': stream.width, 'height': stream.height, 'duration': duration}
+    return {**metadata, **video_identity(path)}
+
+
+def bind_video_job(job, path):
+    """Turn a reusable preset into a result tied to the video actually being scanned."""
+    actual = verify_video(job, path)
+    bound = copy.deepcopy(job)
+    if job.get('reusable', False):
+        bound.update(job_id=uuid.uuid4().hex, reusable=False, video=actual)
+    return bound
+
+
+def export_bundle(parent, video_path, cfg, width, height, duration, reusable=False):
     video_path = Path(video_path)
     job = {'schema': SCHEMA, 'kind': 'sublens-colab-job', 'job_id': uuid.uuid4().hex,
            'video': {'name': video_path.name, 'width': width, 'height': height,
-                     'duration': duration, **video_identity(video_path)}, 'settings': asdict(cfg)}
+                     'duration': duration, **video_identity(video_path)}, 'settings': asdict(cfg),
+           'reusable': reusable}
     job['settings'] = asdict(validate_job(job))
     sources = [*SOURCE_FILES]
     if cfg.language == 'en':
@@ -125,9 +159,10 @@ def export_bundle(parent, video_path, cfg, width, height, duration):
         if not source.is_file():
             raise ValueError(f'Thiếu tệp {source.name}. Cập nhật dự án hoặc chạy setup.bat để tải mô hình.')
     folder = Path(parent) / f'SubLens_Colab_{job["job_id"][:8]}'
+    archive_name = f'sublens_colab_{video_path.stem}.zip'
     folder.mkdir()
     try:
-        with zipfile.ZipFile(folder / 'job.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(folder / archive_name, 'w', zipfile.ZIP_DEFLATED) as archive:
             archive.writestr('job.json', json.dumps(job, ensure_ascii=False, allow_nan=False))
             for name in sources:
                 archive.write(ROOT / name, name)
@@ -135,15 +170,17 @@ def export_bundle(parent, video_path, cfg, width, height, duration):
         (folder / 'HUONG_DAN.txt').write_text(
             '1. Mở https://colab.research.google.com/ và tải notebook SubLens_Colab.ipynb lên.\n'
             '2. Chọn Runtime > Change runtime type > GPU rồi chạy lần lượt các ô.\n'
-            '3. Khi được hỏi, tải job.zip lên. Video gốc tải riêng hoặc chọn từ Google Drive.\n'
-            f'Video gốc: {video_path.name}\n'
+            f'3. Khi được hỏi, tải {archive_name} lên. Video gốc tải riêng hoặc chọn từ Google Drive.\n'
+            + (f'Gói dùng lại: chọn bất kỳ video {width} × {height} có cùng vùng sub/ngôn ngữ/bộ lọc.\n'
+               'Sau mỗi video, tải kết quả ở ô 5 rồi quay lại ô 3 chọn video tiếp theo; không cần tải lại gói.\n'
+               if reusable else f'Video gốc: {video_path.name}\n') +
             '4. Tải result.sublens.json về; mở đúng video trong app, chọn Colab GPU > Nhập kết quả.\n'
             'Gói không chứa video. Video sẽ được xử lý trên máy chủ Google khi bạn tải/chọn nó.\n'
             'Giữ notebook mở khi chạy. Colab có thể ngắt phiên; lưu kết quả về Drive nếu cần.\n',
             encoding='utf-8-sig')
     except Exception:
         # Only remove the three files created by this call, never an existing directory tree.
-        for name in ('job.zip', notebook.name, 'HUONG_DAN.txt'):
+        for name in (archive_name, notebook.name, 'HUONG_DAN.txt'):
             (folder / name).unlink(missing_ok=True)
         folder.rmdir()
         raise
@@ -162,6 +199,8 @@ def validate_result(data):
     if not isinstance(data, dict) or data.get('schema') != SCHEMA or data.get('kind') != 'sublens-colab-result':
         raise ValueError('Chọn tệp result.sublens.json do notebook SubLens xuất ra.')
     cfg = validate_job(data.get('job'))
+    if data['job'].get('reusable', False):
+        raise ValueError('Kết quả chưa gắn với video đã quét. Chạy lại ô 4 để xuất kết quả riêng cho video.')
     raw_cues = data.get('cues')
     if not isinstance(raw_cues, list):
         raise ValueError('Danh sách phụ đề không hợp lệ.')

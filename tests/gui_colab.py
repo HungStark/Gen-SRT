@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import zipfile
+import cv2
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -43,7 +44,7 @@ def run():
             assert info.call_args.args[1] == 'Đã xuất gói Colab'
         folder, = set(artifacts.iterdir()) - old
         extracted = folder / 'unpacked'
-        with zipfile.ZipFile(folder / 'job.zip') as archive:
+        with zipfile.ZipFile(folder / f'sublens_colab_{video.stem}.zip') as archive:
             archive.extractall(extracted)
         result_dir = folder / 'result'
         subprocess.run([sys.executable, str(extracted / 'colab/run_job.py'),
@@ -82,6 +83,46 @@ def run():
             window.export()
         assert original in target.read_text(encoding='utf-8-sig')
         report[lang] = {'cues': [asdict(cue) for cue in cues], 'stats': asdict(stats), 'bundle': str(folder)}
+    # Export one reusable package, then scan two distinct files with the same subtitle layout.
+    video = ROOT / 'test_artifacts/demo_en.mp4'
+    second = artifacts / 'episode_two.mp4'
+    capture = cv2.VideoCapture(str(video))
+    writer = cv2.VideoWriter(str(second), cv2.VideoWriter_fourcc(*'mp4v'), 10, (960, 540))
+    assert writer.isOpened()
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        frame[:12, :12] = 255  # Different content outside the subtitle region.
+        writer.write(frame)
+    capture.release()
+    writer.release()
+    old = set(artifacts.iterdir())
+    with patch.object(QFileDialog, 'getExistingDirectory', return_value=str(artifacts)), \
+            patch.object(QMessageBox, 'information'):
+        window.export_colab(reusable=True)
+    folder, = set(artifacts.iterdir()) - old
+    extracted = folder / 'unpacked'
+    with zipfile.ZipFile(folder / f'sublens_colab_{video.stem}.zip') as archive:
+        archive.extractall(extracted)
+    for index, source in enumerate((video, second)):
+        result_dir = folder / f'episode_{index}'
+        subprocess.run([sys.executable, str(extracted / 'colab/run_job.py'),
+                        '--job', str(extracted / 'job.json'), '--video', str(source),
+                        '--output', str(result_dir), '--cpu'], cwd=extracted, check=True)
+        result = result_dir / 'result.sublens.json'
+        assert len(load_result(result, source)[1]) == 3
+        other = second if index == 0 else video
+        try:
+            load_result(result, other)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Reusable job result accepted the wrong episode')
+        window.open_video(source)
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(result), '')):
+            window.import_colab()
+        assert len(window.cues) == 3
     for width, height in ((760, 560), (1240, 800)):
         window.resize(width, height)
         app.processEvents()
@@ -90,7 +131,7 @@ def run():
     window.grab().save(str(artifacts / 'colab_menu.png'))
     write_json(artifacts / 'report.json', report)
     window.close()
-    print('Colab export / portable CPU runner / import / edit / SRT passed: zh and en.', flush=True)
+    print('Colab export / portable CPU runner / import / edit / SRT passed: zh, en, and one reusable package for two videos.', flush=True)
 
 
 if __name__ == '__main__':

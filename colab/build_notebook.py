@@ -18,7 +18,10 @@ cells = [
     # SubLens · OCR phụ đề bằng GPU Colab
 
     Đây là luồng riêng với app Windows: chọn vùng trong app → xuất gói → quét ở đây → nhập kết quả về app.
-    Trong app chọn **Colab GPU → 1. Xuất gói chạy Colab** để lấy `job.zip`.
+    Trong app chọn **Colab GPU → 1. Xuất gói chạy Colab** để lấy `sublens_colab_<tênvideo>.zip`.
+    Để dùng chung gói cho nhiều video, chọn **Colab GPU → Xuất gói dùng cho nhiều video…**.
+    Các video phải cùng kích thước khung hình, vị trí sub, ngôn ngữ và bộ lọc.
+    Xử lý lần lượt từng video: tải kết quả ở ô 5, rồi chạy lại **ô 3 → 4 → 5** cho video tiếp theo.
 
     Chọn **Runtime → Change runtime type → GPU** (ví dụ T4 nếu được cấp), rồi chạy từng ô từ trên xuống.
     Notebook yêu cầu CUDA thực sự hoạt động; sẽ báo lỗi nếu engine chỉ dùng CPU.
@@ -111,10 +114,10 @@ cells = [
     """)
     run_logged([str(python), '-u', '-c', gpu_check], env=OCR_ENV)
     OCR_PYTHON = str(python)
-    print('Đã cài xong. Chạy ô 2 để tải gói job.zip.')
+    print('Đã cài xong. Chạy ô 2 để tải gói sublens_colab_<tênvideo>.zip.')
     '''),
     code('''
-    # @title 2. Tải job.zip xuất từ app
+    # @title 2. Tải gói sublens_colab_<tênvideo>.zip xuất từ app
     from google.colab import files
     from pathlib import Path
     import json
@@ -127,7 +130,7 @@ cells = [
         raise RuntimeError('Chạy thành công ô 1 trước.')
     uploaded = files.upload()
     if len(uploaded) != 1:
-        raise ValueError('Chỉ chọn một tệp job.zip xuất từ app.')
+        raise ValueError('Chỉ chọn một tệp .zip xuất từ app (sublens_colab_<tênvideo>.zip).')
     bundle = Path(next(iter(uploaded)))
     del uploaded
     required = {'job.json', 'subocr/__init__.py', 'subocr/core.py', 'subocr/video.py',
@@ -139,7 +142,7 @@ cells = [
         if len(set(names)) != len(names) or not required <= set(names) or not set(names) <= allowed:
             raise ValueError('Gói không đúng định dạng. Hãy xuất lại từ app SubLens.')
         if sum(info.file_size for info in archive.infolist()) > 100 * 1024 * 1024:
-            raise ValueError('Gói quá lớn. Video phải tải riêng, không nằm trong job.zip.')
+            raise ValueError('Gói quá lớn. Video phải tải riêng, không nằm trong gói .zip.')
         for name in names:
             archive.extract(name, workspace)
 
@@ -149,7 +152,12 @@ cells = [
                cwd=str(workspace), env=OCR_ENV)
     job = json.loads((workspace / 'job.json').read_text(encoding='utf-8-sig'))
     cfg = SimpleNamespace(**job['settings'])
-    print('Video gốc:', job['video']['name'])
+    if job.get('reusable', False):
+        print('Gói dùng cho nhiều video · video mẫu:', job['video']['name'])
+        print('Kích thước yêu cầu:', job['video']['width'], '×', job['video']['height'])
+        print('Giữ cùng vị trí sub, ngôn ngữ và bộ lọc. Chọn video cần quét ở ô 3.')
+    else:
+        print('Video gốc:', job['video']['name'])
     print('Ngôn ngữ:', cfg.language, '· vùng:', cfg.roi)
     print('Gói đã sẵn sàng. Chọn nguồn video trong ô 3.')
     '''),
@@ -157,11 +165,13 @@ cells = [
     ## Chọn video
     Với video lớn, nên dùng Google Drive: tải video gốc lên Drive, chọn **Google Drive** ở ô dưới
     và điền đường dẫn, ví dụ `/content/drive/MyDrive/video.mp4`.
-    Với video nhỏ có thể chọn **Tải lên**. Dùng đúng tệp gốc, chưa cắt hoặc chuyển mã;
-    tên tệp có thể khác. Notebook kiểm tra dung lượng và dấu vân tay lấy mẫu đầu/giữa/cuối tệp.
+    Với video nhỏ có thể chọn **Tải lên**.
+    Với **gói cho một video**, dùng đúng tệp gốc, chưa cắt/chuyển mã; tên có thể khác.
+    Với **gói dùng cho nhiều video**, chọn bất kỳ video cùng kích thước và cùng bố cục sub.
+    Mỗi kết quả vẫn được gắn với đúng video đã quét để nhập lại app.
     '''),
     code('''
-    # @title 3. Chọn video gốc
+    # @title 3. Chọn video cần quét (chạy lại ô này cho video tiếp theo)
     video_source = "Google Drive" # @param ["Google Drive", "Tải lên"]
     drive_video_path = "/content/drive/MyDrive/video.mp4" # @param {type:"string"}
     copy_to_local = True # @param {type:"boolean"}
@@ -187,10 +197,10 @@ cells = [
         # Sequential decoding from the local disk avoids repeated Drive reads.
         if shutil.disk_usage(workspace).free < video.stat().st_size + 256 * 1024 * 1024:
             raise ValueError('Không đủ dung lượng tạm. Tắt copy_to_local hoặc chọn video nhỏ hơn.')
-        local_video = workspace / ('input_video' + video.suffix)
+        local_video = Path(tempfile.mkdtemp(prefix='video_', dir=workspace)) / video.name
         shutil.copyfile(video, local_video)
         video = local_video
-    print('Đã kiểm tra đúng video:', video)
+    print('Video sẵn sàng:', video)
     ''' , form=True),
     code('''
     # @title 4. Quét OCR bằng GPU
@@ -226,6 +236,8 @@ cells = [
     print('Trong app: mở video gốc → Colab GPU → 2. Nhập kết quả Colab → chọn result.sublens.json.')
     print('Sau đó sửa chữ, thời gian, xóa/gộp, hoàn tác và xuất SRT như bình thường.')
     print('Bản SRT cũng nằm tại:', output / ('result.' + cfg.language + '.srt'))
+    if job.get('reusable', False):
+        print('Video tiếp theo: chạy lại ô 3 → 4 → 5. Giữ nguyên gói ở ô 2.')
     '''),
 ]
 
