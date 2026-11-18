@@ -174,7 +174,8 @@ def export_bundle(parent, video_path, cfg, width, height, duration, reusable=Fal
             + (f'Gói dùng lại: chọn bất kỳ video {width} × {height} có cùng vùng sub/ngôn ngữ/bộ lọc.\n'
                'Sau mỗi video, tải kết quả ở ô 5 rồi quay lại ô 3 chọn video tiếp theo; không cần tải lại gói.\n'
                if reusable else f'Video gốc: {video_path.name}\n') +
-            '4. Tải result.sublens.json về; mở đúng video trong app, chọn Colab GPU > Nhập kết quả.\n'
+            '4. Nhập tên video ở ô 2. Ô 4 lưu kết quả vào MyDrive/SubLens/<tên video> nếu bật lưu Drive.\n'
+            '5. Ô 5 tải ZIP gồm JSON và SRT; giải nén rồi mở đúng video trong app, chọn Colab GPU > Nhập kết quả.\n'
             'Gói không chứa video. Video sẽ được xử lý trên máy chủ Google khi bạn tải/chọn nó.\n'
             'Giữ notebook mở khi chạy. Colab có thể ngắt phiên; lưu kết quả về Drive nếu cần.\n',
             encoding='utf-8-sig')

@@ -20,6 +20,7 @@ cells = [
     Đây là luồng riêng với app Windows: chọn vùng trong app → xuất gói → quét ở đây → nhập kết quả về app.
     Trong app chọn **Colab GPU → 1. Xuất gói chạy Colab** để lấy `sublens_colab_<tênvideo>.zip`.
     Để dùng chung gói cho nhiều video, chọn **Colab GPU → Xuất gói dùng cho nhiều video…**.
+    Nhập tên video ở ô 2 để đặt tên thư mục kết quả trên Drive và gói tải về.
     Các video phải cùng kích thước khung hình, vị trí sub, ngôn ngữ và bộ lọc.
     Xử lý lần lượt từng video: tải kết quả ở ô 5, rồi chạy lại **ô 3 → 4 → 5** cho video tiếp theo.
 
@@ -117,7 +118,9 @@ cells = [
     print('Đã cài xong. Chạy ô 2 để tải gói sublens_colab_<tênvideo>.zip.')
     '''),
     code('''
-    # @title 2. Tải gói sublens_colab_<tênvideo>.zip xuất từ app
+    # @title 2. Nhập tên video và tải gói .zip xuất từ app
+    video_name = "" # @param {type:"string"}
+
     from google.colab import files
     from pathlib import Path
     import json
@@ -125,7 +128,21 @@ cells = [
     import zipfile
     from types import SimpleNamespace
 
+    def clean_result_name(value):
+        name = value.strip()
+        invalid_characters = any(c in '<>:"/\\\\|?*' or ord(c) < 32 for c in name)
+        if Path(name).suffix.lower() in ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.ts'):
+            name = Path(name).stem
+        if (not name or name in ('.', '..') or len(name) > 150 or name.endswith(('.', ' '))
+                or invalid_characters):
+            raise ValueError('Nhập tên video để đặt tên thư mục, tối đa 150 ký tự; không nhập đường dẫn hoặc ký tự < > : " / \\\\ | ? *.')
+        reserved = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{prefix}{n}' for prefix in ('COM', 'LPT') for n in range(1, 10)}
+        if name.split('.')[0].upper() in reserved:
+            raise ValueError('Tên này được hệ thống dành riêng. Chọn tên video khác.')
+        return name
+
     job = cfg = video = output = None
+    result_folder_name = clean_result_name(video_name)
     if not globals().get('OCR_PYTHON'):
         raise RuntimeError('Chạy thành công ô 1 trước.')
     uploaded = files.upload()
@@ -159,25 +176,29 @@ cells = [
     else:
         print('Video gốc:', job['video']['name'])
     print('Ngôn ngữ:', cfg.language, '· vùng:', cfg.roi)
+    print('Tên thư mục kết quả:', result_folder_name)
     print('Gói đã sẵn sàng. Chọn nguồn video trong ô 3.')
-    '''),
+    ''', form=True),
     markdown('''
     ## Chọn video
     Với video lớn, nên dùng Google Drive: tải video gốc lên Drive, chọn **Google Drive** ở ô dưới
-    và điền đường dẫn, ví dụ `/content/drive/MyDrive/video.mp4`.
+    và điền đường dẫn, ví dụ `/content/drive/MyDrive/video/example.mp4`.
     Với video nhỏ có thể chọn **Tải lên**.
     Với **gói cho một video**, dùng đúng tệp gốc, chưa cắt/chuyển mã; tên có thể khác.
     Với **gói dùng cho nhiều video**, chọn bất kỳ video cùng kích thước và cùng bố cục sub.
     Mỗi kết quả vẫn được gắn với đúng video đã quét để nhập lại app.
+    Khi đổi video trong gói dùng lại, điền tên kết quả mới ở ô 3; để trống sẽ dùng tên đã nhập ở ô 2.
     '''),
     code('''
     # @title 3. Chọn video cần quét (chạy lại ô này cho video tiếp theo)
     video_source = "Google Drive" # @param ["Google Drive", "Tải lên"]
-    drive_video_path = "/content/drive/MyDrive/video.mp4" # @param {type:"string"}
+    drive_video_path = "/content/drive/MyDrive/video/example.mp4" # @param {type:"string"}
+    result_name_for_this_video = "" # @param {type:"string"}
     copy_to_local = True # @param {type:"boolean"}
 
     import shutil
     video = output = None
+    result_folder_name = clean_result_name(result_name_for_this_video.strip() or video_name)
     if video_source == 'Google Drive':
         from google.colab import drive
         drive.mount('/content/drive')
@@ -212,7 +233,11 @@ cells = [
         raise RuntimeError('Chạy thành công ô 1 trước.')
     if globals().get('video') is None or not video.is_file():
         raise RuntimeError('Chọn video ở ô 3 trước.')
-    run_output = Path(tempfile.mkdtemp(prefix='result_', dir=workspace))
+    if not globals().get('result_folder_name'):
+        raise RuntimeError('Nhập tên video ở ô 2 rồi chọn video ở ô 3 trước.')
+    run_root = Path(tempfile.mkdtemp(prefix='result_', dir=workspace))
+    run_output = run_root / result_folder_name
+    run_output.mkdir()
     command = [OCR_PYTHON, '-u', str(workspace / 'colab/run_job.py'),
                '--job', str(workspace / 'job.json'), '--video', str(video), '--output', str(run_output)]
     # The child streams progress and checks CUDA on the actual OCR sessions.
@@ -221,23 +246,43 @@ cells = [
     if save_results_to_drive:
         from google.colab import drive
         drive.mount('/content/drive')
-        destination = Path('/content/drive/MyDrive/SubLens') / job['job_id'] / output.name
-        destination.mkdir(parents=True, exist_ok=True)
+        drive_root = Path('/content/drive/MyDrive/SubLens')
+        drive_root.mkdir(parents=True, exist_ok=True)
+        destination = drive_root / output.name
+        sequence = 2
+        while True:
+            try:
+                destination.mkdir()
+                break
+            except FileExistsError:
+                destination = drive_root / f'{output.name} ({sequence})'
+                sequence += 1
         for source in output.iterdir():
             shutil.copyfile(source, destination / source.name)
         print('Đã lưu kết quả lên Drive:', destination)
     print('Quét xong. Chạy ô 5 để tải kết quả về máy.')
     ''' , form=True),
     code('''
-    # @title 5. Tải kết quả về app
+    # @title 5. Tải cả JSON và SRT về máy
     if globals().get('output') is None or not (output / 'result.sublens.json').is_file():
         raise RuntimeError('Chưa có kết quả. Chạy thành công ô 4 trước.')
-    files.download(str(output / 'result.sublens.json'))
-    print('Trong app: mở video gốc → Colab GPU → 2. Nhập kết quả Colab → chọn result.sublens.json.')
+    import zipfile
+    result_json = output / 'result.sublens.json'
+    completed = json.loads(result_json.read_text(encoding='utf-8-sig'))
+    result_srt = output / ('result.' + completed['job']['settings']['language'] + '.srt')
+    if not result_srt.is_file():
+        raise RuntimeError('Thiếu tệp SRT của lượt quét này. Kiểm tra log ô 4 trước khi tải.')
+    download_zip = output.parent / (output.name + '.zip')
+    with zipfile.ZipFile(download_zip, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for source in (result_json, result_srt):
+            archive.write(source, arcname=output.name + '/' + source.name)
+    files.download(str(download_zip))
+    print('Đã tải cả JSON và SRT trong:', download_zip.name)
+    print('Giải nén, rồi trong app: mở video gốc → Colab GPU → 2. Nhập kết quả Colab → chọn result.sublens.json.')
     print('Sau đó sửa chữ, thời gian, xóa/gộp, hoàn tác và xuất SRT như bình thường.')
-    print('Bản SRT cũng nằm tại:', output / ('result.' + cfg.language + '.srt'))
+    print('Thư mục kết quả:', output)
     if job.get('reusable', False):
-        print('Video tiếp theo: chạy lại ô 3 → 4 → 5. Giữ nguyên gói ở ô 2.')
+        print('Video tiếp theo: nhập tên kết quả mới ở ô 3, rồi chạy ô 3 → 4 → 5. Giữ nguyên gói ở ô 2.')
     '''),
 ]
 

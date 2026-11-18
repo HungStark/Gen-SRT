@@ -630,14 +630,14 @@ class MainWindow(QMainWindow):
         self.log.setPlainText(f'Gói Colab: {folder}\n' + mode_hint +
                               'Mở SubLens_Colab.ipynb trên colab.research.google.com, chọn runtime GPU.\n'
                               f'Chạy các ô, tải sublens_colab_{Path(self.video_path).stem}.zip và chọn video gốc (từ Drive hoặc tải lên).\n'
-                              'Tải result.sublens.json rồi chọn Colab GPU → Nhập kết quả Colab.')
+                              'Ô 5 tải ZIP kết quả; giải nén rồi chọn Colab GPU → Nhập kết quả Colab để mở JSON.')
         self.statusBar().showMessage(f'Đã xuất gói Colab: {folder}')
         QMessageBox.information(self, 'Đã xuất gói Colab',
                                 f'Đã lưu tại:\n{folder}\n\n' + mode_hint +
                                 '1. Mở colab.research.google.com → Upload notebook → SubLens_Colab.ipynb.\n'
                                 '2. Chọn Runtime → Change runtime type → GPU, chạy các ô theo thứ tự.\n'
                                 f'3. Tải sublens_colab_{Path(self.video_path).stem}.zip và chọn video gốc theo hướng dẫn trong notebook.\n'
-                                '4. Tải result.sublens.json rồi nhập về qua menu Colab GPU.\n\n'
+                                '4. Nhập tên video ở ô 2; ô 4 lưu Drive theo tên đó. Ô 5 tải ZIP gồm JSON và SRT; giải nén rồi nhập JSON về app.\n\n'
                                 'Gói không chứa video. Khi dùng Colab, video sẽ được xử lý trên máy chủ Google.')
 
     def import_colab(self):

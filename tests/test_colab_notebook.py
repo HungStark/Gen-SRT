@@ -5,11 +5,12 @@ import contextlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import SimpleNamespace, ModuleType
 import unittest
 from unittest.mock import patch
 import textwrap
@@ -96,6 +97,7 @@ class ColabNotebookTests(unittest.TestCase):
         env = {'Path': Path, 'tempfile': tempfile, 'workspace': workspace, 'video': video,
                'OCR_PYTHON': sys.executable, 'OCR_ENV': dict(os.environ),
                'sys': SimpleNamespace(executable='wrong-kernel-python'), 'run_logged': self.run_logged,
+               'result_folder_name': 'Phim tập 01',
                'output': self.root / 'old-result'}
         tree = ast.parse(self.cells[3])
         for node in tree.body:
@@ -109,12 +111,74 @@ class ColabNotebookTests(unittest.TestCase):
         self.assertIn('rapidocr_onnxruntime', (env['run_output'] / 'ocr.log').read_text())
         # A later successful retry gets a separate output directory and streams its log too.
         failed_output = env['run_output']
-        runner.write_text("import sys\nfrom pathlib import Path\np=Path(sys.argv[sys.argv.index('--output')+1])\n(p/'result.sublens.json').write_text('{}')\nprint('OCR finished')\n", encoding='utf-8')
+        runner.write_text("import sys,json\nfrom pathlib import Path\np=Path(sys.argv[sys.argv.index('--output')+1])\n(p/'result.sublens.json').write_text(json.dumps({'job':{'settings':{'language':'en'}}}))\n(p/'result.en.srt').write_text('subtitle content')\nprint('OCR finished')\n", encoding='utf-8')
         with contextlib.redirect_stdout(io.StringIO()) as stream:
             exec(compile(tree, '<notebook step4>', 'exec'), env)
         self.assertNotEqual(env['output'], failed_output)
         self.assertTrue((env['output'] / 'result.sublens.json').is_file())
+        self.assertEqual(env['output'].name, 'Phim tập 01')
         self.assertIn('OCR finished', stream.getvalue())
+        # Download one archive containing both original files under the chosen folder.
+        downloaded = []
+        env.update(json=json, files=SimpleNamespace(download=downloaded.append), job={'reusable': False},
+                   cfg=SimpleNamespace(language='zh'))
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(self.cells[4], '<notebook step5>', 'exec'), env)
+        self.assertEqual(len(downloaded), 1)
+        self.assertEqual(Path(downloaded[0]).name, 'Phim tập 01.zip')
+        import zipfile
+        with zipfile.ZipFile(downloaded[0]) as archive:
+            self.assertEqual(set(archive.namelist()), {'Phim tập 01/result.sublens.json', 'Phim tập 01/result.en.srt'})
+            self.assertEqual(archive.read('Phim tập 01/result.en.srt'), b'subtitle content')
+        (env['output'] / 'result.en.srt').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'SRT'):
+            exec(compile(self.cells[4], '<notebook step5>', 'exec'), env)
+        self.assertEqual(len(downloaded), 1)
+
+    def test_result_names_accept_unicode_and_block_path_components(self):
+        tree = ast.parse(self.cells[1])
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'clean_result_name')
+        env = {'Path': Path}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), '<result name>', 'exec'), env)
+        clean = env['clean_result_name']
+        self.assertEqual(clean('  Phim tập 01.mp4  '), 'Phim tập 01')
+        self.assertEqual(clean('Episode 1.2'), 'Episode 1.2')
+        for bad in ('', '  ', '..', '../escape.mp4', 'folder/video', 'folder\\video', 'C:video',
+                    'CON', 'NUL.txt', 'trailing.', 'a' * 151):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                clean(bad)
+
+    def test_step4_saves_directly_under_named_drive_folder_without_overwriting(self):
+        workspace = self.root / 'workspace'
+        workspace.mkdir()
+        video = workspace / 'input.mp4'
+        video.write_bytes(b'video')
+        drive_root = self.root / 'Drive/SubLens'
+        mounts = []
+        google = ModuleType('google')
+        colab = ModuleType('google.colab')
+        colab.drive = SimpleNamespace(mount=mounts.append)
+        google.colab = colab
+
+        def fake_ocr(command, log_path, **kwargs):
+            output = Path(command[command.index('--output') + 1])
+            (output / 'result.sublens.json').write_text('json')
+            (output / 'result.en.srt').write_text('srt')
+
+        env = {'Path': Path, 'tempfile': tempfile, 'shutil': shutil, 'workspace': workspace, 'video': video,
+               'OCR_PYTHON': sys.executable, 'OCR_ENV': {}, 'run_logged': fake_ocr,
+               'result_folder_name': 'Phim tập 01'}
+        source = self.cells[3].replace('/content/drive/MyDrive/SubLens', drive_root.as_posix())
+        with patch.dict(sys.modules, {'google': google, 'google.colab': colab}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(source, '<step4 Drive>', 'exec'), env)
+            first = env['destination']
+            self.assertEqual(first, drive_root / 'Phim tập 01')
+            (first / 'result.en.srt').write_text('keep existing')
+            exec(compile(source, '<step4 Drive retry>', 'exec'), env)
+        self.assertEqual(env['destination'], drive_root / 'Phim tập 01 (2)')
+        self.assertEqual((first / 'result.en.srt').read_text(), 'keep existing')
+        self.assertEqual((env['destination'] / 'result.en.srt').read_text(), 'srt')
 
 
 if __name__ == '__main__':
