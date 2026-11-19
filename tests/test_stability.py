@@ -77,7 +77,8 @@ class StabilityTests(unittest.TestCase):
         engine = OcrEngine.__new__(OcrEngine)
         def box(left, right):
             return [[left, 50], [right, 50], [right, 80], [left, 80]]
-        engine.engine = lambda *args, **kwargs: ([[box(20, 600), TEXT, .99], [box(900, 990), '隆质餐', .95]], None)
+        from types import SimpleNamespace
+        engine.engine = lambda *args, **kwargs: SimpleNamespace(boxes=[box(20, 600), box(900, 990)], txts=[TEXT, '隆质餐'], scores=[.99, .95])
         engine.read_english = lambda patch: (TEXT, .99)
         observation = engine.read(np.zeros((130, 1000, 3), dtype=np.uint8), Settings((0, 0, 1000, 130), 'en'))
         self.assertEqual(observation.text, TEXT)

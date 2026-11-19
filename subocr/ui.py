@@ -154,8 +154,9 @@ class Worker(QThread):
 
     def run(self):
         try:
-            if self.engine is None:
-                self.engine = OcrEngine()
+            if (self.engine is None or self.engine.device != self.cfg.device
+                    or self.engine.model_size != self.cfg.model_size):
+                self.engine = OcrEngine(self.cfg.device, self.cfg.model_size)
             if self.cancel.is_set():
                 raise Cancelled()
             result = self.engine.read(self.source, self.cfg) if self.mode == 'preview' else extract(
@@ -450,7 +451,7 @@ class MainWindow(QMainWindow):
     def _build_options(self):
         self.options_dialog = QDialog(self)
         self.options_dialog.setWindowTitle('Tùy chọn OCR')
-        self.options_dialog.resize(470, 450)
+        self.options_dialog.resize(470, 260)
         layout = QVBoxLayout(self.options_dialog)
         self.lock_line = QCheckBox('Khóa vị trí dòng theo kết quả đọc thử')
         self.lock_line.setChecked(True)
@@ -480,48 +481,32 @@ class MainWindow(QMainWindow):
         self.update_color_display()
         colors.addStretch()
         layout.addLayout(colors)
-        explanation = QLabel('Bấm Chọn màu… để chọn từ bảng màu hoặc nhập mã màu; '
-                             'cũng có thể bấm chuột phải vào phần màu đặc của nét chữ trên video để lấy mẫu.\n\n'
-                             'Quét cố định mỗi 0,5 giây, chia đôi khi đổi chữ đến khoảng 0,1 giây. '
-                             'Câu rất ngắn nằm giữa hai mẫu có thể bị bỏ sót.')
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        layout.addWidget(QLabel('Tên riêng / từ tiếng Anh được chấp nhận (mỗi dòng một tên):'))
-        self.accepted_words_edit = QPlainTextEdit()
-        self.accepted_words_edit.setMaximumHeight(90)
-        self.accepted_words_edit.setPlaceholderText('Ví dụ: Kunzi\nSeko Ai')
+        device_row = QHBoxLayout()
+        device_row.addWidget(QLabel('Chạy OCR bằng:'))
+        self.ocr_device = QComboBox()
+        self.ocr_device.addItem('CPU', 'cpu')
+        self.ocr_device.addItem('GPU', 'gpu')
+        self.ocr_device.currentIndexChanged.connect(self.invalidate_preview)
+        device_row.addWidget(self.ocr_device)
+        layout.addLayout(device_row)
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel('Model PP-OCRv6:'))
+        self.ocr_model = QComboBox()
+        for size in ('tiny', 'small', 'medium'):
+            self.ocr_model.addItem(size.capitalize(), size)
+        self.ocr_model.setCurrentIndex(1)
+        self.ocr_model.currentIndexChanged.connect(self.invalidate_preview)
+        model_row.addWidget(self.ocr_model)
+        layout.addLayout(model_row)
         try:
-            self._saved_accepted_words = ACCEPTED_WORDS_PATH.read_text(encoding='utf-8-sig')
+            saved_words = ACCEPTED_WORDS_PATH.read_text(encoding='utf-8-sig')
         except OSError:
-            logging.exception('Cannot load accepted spelling words')
-            self._saved_accepted_words = ''
-        self.accepted_words_edit.setPlainText(self._saved_accepted_words)
-        self.spell_checker.accepted = accepted_words(self._saved_accepted_words)
-        layout.addWidget(self.accepted_words_edit)
-        spelling_hint = QLabel('Chỉ cảnh báo chính tả tiếng Anh, không tự sửa. '
-                              'Tên có chữ hoa giữa câu và chữ viết tắt được bỏ qua. '
-                              'Đỏ: <80% · Cam: nghi sai từ · Vàng: giống câu liền kề. '
-                              'Rê chuột lên dòng để xem lý do.')
-        spelling_hint.setWordWrap(True)
-        layout.addWidget(spelling_hint)
-        self.options_dialog.finished.connect(self.apply_accepted_words)
+            saved_words = ''
+        self.spell_checker.accepted = accepted_words(saved_words)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.button(QDialogButtonBox.Close).setText('Đóng')
         buttons.rejected.connect(self.options_dialog.reject)
         layout.addWidget(buttons)
-
-    def apply_accepted_words(self, *args):
-        text = self.accepted_words_edit.toPlainText()
-        self.spell_checker.accepted = accepted_words(text)
-        self.refresh_styles()
-        if text != self._saved_accepted_words:
-            try:
-                ACCEPTED_WORDS_PATH.write_text(text, encoding='utf-8')
-                self._saved_accepted_words = text
-            except OSError as error:
-                logging.exception('Cannot save accepted spelling words')
-                QMessageBox.warning(self, 'Không lưu được danh sách từ',
-                                    f'Danh sách vẫn áp dụng trong lần mở này.\n{error}')
 
     def invalidate_preview(self, *args):
         self.preview_bands, self.preview_lines = [], []
@@ -622,7 +607,8 @@ class MainWindow(QMainWindow):
                         confidence=self.confidence.value(),
                         line_bands=copy.deepcopy(self.preview_bands) if use_bands and self.lock_line.isChecked() else [],
                         color=self.selected_color if self.color_check.isChecked() else None,
-                        algorithm='adaptive', boundary_precision=.1)
+                        algorithm='adaptive', boundary_precision=.1,
+                        device=self.ocr_device.currentData(), model_size=self.ocr_model.currentData())
 
     def preview(self):
         try:
@@ -712,12 +698,15 @@ class MainWindow(QMainWindow):
     def start_job(self, mode, source, cfg):
         if self.worker is not None:
             return
+        if self.engine is not None and (self.engine.device != cfg.device or self.engine.model_size != cfg.model_size):
+            self.engine = None
         for widget in self.job_controls:
             widget.setEnabled(False)
         self.table.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.progress_bar.setRange(0, 0)
-        self.log.setPlainText('Đang khởi tạo OCR…' if self.engine is None else 'Đang đọc phụ đề…')
+        self.log.setPlainText(f'PP-OCRv6 {cfg.model_size.capitalize()} · {cfg.device.upper()}\n'
+                              + ('Đang khởi tạo OCR…' if self.engine is None else 'Đang đọc phụ đề…'))
         self.worker = Worker(mode, source, cfg, self.engine)
         self.worker.done.connect(self.job_done)
         self.worker.failed.connect(self.job_failed)

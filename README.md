@@ -1,6 +1,6 @@
 # SubLens — OCR phụ đề video thành SRT
 
-Ứng dụng Windows chạy trên máy bằng CPU. Mặc định xuất tiếng Trung; có thể chọn tiếng Anh. Nhận diện chữ đã in trên hình video, không chuyển giọng nói thành chữ hoặc dịch phụ đề.
+Ứng dụng Windows dùng **PaddleOCR PP-OCRv6** (bản ONNX qua RapidOCR 3.10.0), chạy bằng CPU hoặc GPU DirectML. Mặc định xuất tiếng Trung; có thể chọn tiếng Anh. Nhận diện chữ đã in trên hình video, không chuyển giọng nói thành chữ hoặc dịch phụ đề.
 
 ## Mở ứng dụng
 
@@ -20,7 +20,7 @@ Kết quả nằm trong thư mục mới `Video_<rộng>x<cao>_<thời gian>_<m�
 
 ## Luồng riêng: quét bằng GPU Colab
 
-Luồng cục bộ qua `app.py` / `start.bat` và nút **Đọc cả video** vẫn chạy CPU trên máy như trước. Colab là một lựa chọn riêng trong menu **Colab GPU** ở hàng chọn video.
+Luồng cục bộ qua `app.py` / `start.bat` và nút **Đọc cả video** chạy trên máy với CPU/GPU theo Tùy chọn. Colab là một lựa chọn riêng trong menu **Colab GPU** ở hàng chọn video.
 
 1. Mở video, khoanh vùng, chọn ngôn ngữ và tùy chọn như bình thường. Nếu bật khóa dòng, đọc thử trước; hoặc tắt khóa dòng trong Tùy chọn.
 2. Chọn **Colab GPU → 1. Xuất gói chạy Colab…**, chọn thư mục lưu. App tạo thư mục `SubLens_Colab_<mã>` có `sublens_colab_<tênvideo>.zip`, `SubLens_Colab.ipynb` và `HUONG_DAN.txt`. Tên gói dùng tên video bỏ phần mở rộng: `Phim tập 01.mp4` → `sublens_colab_Phim tập 01.zip`. Gói chứa mã quét, cấu hình và mô hình tiếng Anh nếu cần; video tải riêng.
@@ -31,9 +31,9 @@ Luồng cục bộ qua `app.py` / `start.bat` và nút **Đọc cả video** v�
 
 Muốn **một gói dùng cho nhiều video**, chọn **Colab GPU → Xuất gói dùng cho nhiều video…** sau khi chọn vùng sub trên một video mẫu. Tên gói vẫn là `sublens_colab_<tênvideo mẫu>.zip`, nhưng cho phép chọn video khác cùng chiều rộng/cao khung hình. Vùng sub, ngôn ngữ, khóa dòng và bộ lọc được dùng chung, nên các video cần có bố cục phụ đề tương ứng. Nếu bố cục hoặc kích thước khác, hãy xuất gói phù hợp khác.
 
-Trên Colab, chỉ tải gói này một lần ở ô 2. Chạy ô 3 → 4 → 5 để quét và tải kết quả cho từng video; xong quay lại ô 3 chọn video tiếp theo và nhập **result_name_for_this_video** để đặt tên kết quả mới (để trống dùng tên ở ô 2). Đây là xử lý lần lượt, chưa phải chọn cả loạt chạy tự động. Kết quả mỗi lượt chứa thông tin, dấu kiểm tra và thời lượng của video thực sự đã quét, nên khi nhập vào app vẫn phải mở đúng video đó. Luồng gói cho một video và luồng CPU cục bộ tiếp tục hoạt động như trước.
+Trên Colab, chỉ tải gói này một lần ở ô 2. Chạy ô 3 → 4 → 5 để quét và tải kết quả cho từng video; xong quay lại ô 3 chọn video tiếp theo và nhập **result_name_for_this_video** để đặt tên kết quả mới (để trống dùng tên ở ô 2). Đây là xử lý lần lượt, chưa phải chọn cả loạt chạy tự động. Kết quả mỗi lượt chứa thông tin, dấu kiểm tra và thời lượng của video thực sự đã quét, nên khi nhập vào app vẫn phải mở đúng video đó. Luồng gói cho một video và luồng cục bộ tiếp tục hoạt động.
 
-Colab xử lý video trên máy chủ Google. Lần đầu cần mạng để cài thư viện. Ô 1 tạo môi trường Python 3.12 riêng bằng uv trong `/content/sublens_runtime_py312`, cài đúng `rapidocr-onnxruntime==1.4.4` cùng ONNX Runtime GPU 1.23.2 và CUDA/cuDNN, rồi chạy thử OCR trên GPU. Vì RapidOCR này yêu cầu Python dưới 3.13, bộ quét dùng Python riêng ngay cả khi kernel notebook là Python 3.13; không cài thay bằng gói `rapidocr` vì API khác. Xem [yêu cầu Python của RapidOCR](https://pypi.org/project/rapidocr-onnxruntime/1.4.4/).
+Colab xử lý video trên máy chủ Google. Ô 1 tạo môi trường Python 3.12 riêng bằng uv trong `/content/sublens_runtime_py312`, cài `rapidocr==3.10.0`, ONNX Runtime GPU 1.23.2 và CUDA/cuDNN. Ô 4 dùng đúng cặp model phát hiện/nhận dạng PP-OCRv6 đã chọn khi xuất gói; kiểm tra CUDA trên phiên OCR thực tế trước khi quét. Cần xuất lại gói từ app mới; các gói OCR cũ không dùng với notebook này.
 
 Các ô chọn tệp/Drive chỉ dùng thư viện chuẩn và công cụ có sẵn của Colab; các bước đọc cấu hình, kiểm tra video và quét chạy trong môi trường OCR riêng. Không thay gói của kernel Colab hoặc môi trường Windows. Notebook kiểm tra CUDA trên phiên OCR thực tế và không tự chuyển sang CPU khi GPU lỗi. Xem [tài liệu CUDA của ONNX Runtime](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html).
 
@@ -60,7 +60,7 @@ Notebook nguồn nằm trong `colab/SubLens_Colab.ipynb`; có thể tái tạo b
 5. Bấm **Đọc cả video**. Tool quét mỗi **0,5 giây**, dùng lại kết quả OCR và chia đôi các khoảng đổi câu đến khoảng **0,1 giây**.
 6. Kiểm tra, chỉnh sửa bảng bên phải rồi bấm **Xuất SRT…**. Tên mặc định `video.zh.srt` hoặc `video.en.srt`, mã hóa UTF-8 có BOM. Chỉ ghi tệp khi bạn xuất.
 
-Trong **Tùy chọn…** có khóa dòng theo kết quả đọc thử, ngưỡng tin cậy OCR và lọc màu. Bấm **Chọn màu…** cạnh **Lọc theo màu mẫu** để mở bảng màu hoặc nhập mã HEX/RGB; màu đã chọn hiện bằng ô màu và mã HEX. Chọn màu sẽ tự bật bộ lọc. Cũng có thể bấm chuột phải vào phần màu đặc bên trong nét chữ trên video để lấy mẫu; tránh viền đen và nền. Nếu câu có thể xuống hai dòng, đọc thử ở đoạn có đủ hai dòng trước khi khóa. Nếu sub đổi vị trí hoặc màu, điều chỉnh/tắt bộ lọc tương ứng.
+Trong **Tùy chọn…**, chọn **CPU** hoặc **GPU** và model **Tiny**, **Small** hoặc **Medium**. Mặc định CPU + Small. Tiny nhẹ nhất; Medium dùng nhiều bộ nhớ hơn. GPU trên Windows dùng DirectML (Intel/AMD/NVIDIA), Colab dùng CUDA. Các model được đóng gói sẵn, không cần tải lúc chạy. Nếu GPU không hoạt động, app báo lỗi để bạn chọn CPU. Ngoài ra có khóa dòng theo kết quả đọc thử, ngưỡng tin cậy OCR và lọc màu. Bấm **Chọn màu…** cạnh **Lọc theo màu mẫu** để mở bảng màu hoặc nhập mã HEX/RGB; màu đã chọn hiện bằng ô màu và mã HEX. Chọn màu sẽ tự bật bộ lọc. Cũng có thể bấm chuột phải vào phần màu đặc bên trong nét chữ trên video để lấy mẫu; tránh viền đen và nền. Nếu câu có thể xuống hai dòng, đọc thử ở đoạn có đủ hai dòng trước khi khóa. Nếu sub đổi vị trí hoặc màu, điều chỉnh/tắt bộ lọc tương ứng.
 
 ## Sửa, xóa và gộp kết quả
 
@@ -81,7 +81,7 @@ Màu nền dòng được chọn theo thứ tự ưu tiên **đỏ → cam → v
 
 Rê chuột lên bất kỳ ô nào để xem tất cả lý do, kể cả khi một màu ưu tiên đã che các cảnh báo khác. Màu được tính lại sau khi sửa/xóa/gộp/hoàn tác. Cột tin cậy chuyển thành **Đã sửa** khi sửa/gộp; tooltip giữ điểm OCR gốc để tham khảo. Các lỗi thời gian/chữ rỗng hiển thị bằng chữ đỏ và tooltip lỗi, phải sửa trước khi xuất; không ghi đè quy tắc màu nền. Sau khi xóa/gộp, số thứ tự trong SRT được đánh lại liên tục.
 
-Cảnh báo chính tả dùng từ điển tiếng Anh cục bộ, ưu tiên ít báo nhầm: chỉ nghi ngờ từ lệch một ký tự so với từ thông dụng, bỏ qua mã/số, chữ viết tắt và từ có chữ hoa giữa câu để giữ tên riêng như Kunzi. Tên riêng ở đầu câu vẫn có thể bị nghi nhầm nếu giống từ thông dụng; thêm vào **Tùy chọn → Tên riêng / từ tiếng Anh được chấp nhận**, mỗi dòng một tên, rồi đóng hộp thoại để áp dụng/lưu. Danh sách nằm trong `accepted_words.txt`, không phân biệt hoa/thường và được giữ qua các lần mở ứng dụng. Bộ kiểm tra này không kiểm tra ngữ pháp, không phát hiện mọi lỗi và không kiểm tra chính tả tiếng Trung.
+Cảnh báo chính tả dùng từ điển tiếng Anh cục bộ, ưu tiên ít báo nhầm: chỉ nghi ngờ từ lệch một ký tự so với từ thông dụng, bỏ qua mã/số, chữ viết tắt và từ có chữ hoa giữa câu để giữ tên riêng như Kunzi. Các tên đã lưu trong accepted_words.txt vẫn được nạp; ô nhập tên riêng đã được bỏ khỏi Tùy chọn. Bộ kiểm tra này không kiểm tra ngữ pháp, không phát hiện mọi lỗi và không kiểm tra chính tả tiếng Trung.
 
 ## Cách xác định mốc thời gian
 
@@ -112,4 +112,4 @@ Kiểm tra OCR thật gồm hai ngôn ngữ, một dòng, nhiều dòng, câu l�
 
 ## Thành phần
 
-PySide6 Essentials, OpenCV, PyAV/FFmpeg, [RapidOCR](https://github.com/RapidAI/RapidOCR) và ONNX Runtime. Mô hình Trung/Anh PP-OCRv4 đi kèm `rapidocr-onnxruntime==1.4.4`; mô hình nhận diện tiếng Anh riêng trong `models/en_PP-OCRv4_rec_mobile.onnx`, nguồn [RapidAI](https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx). Từ điển tiếng Anh lấy từ [SymSpellPy](https://github.com/mammothb/symspellpy/blob/master/symspellpy/frequency_dictionary_en_82_765.txt), đóng gói sẵn; nguồn, hash và giấy phép trong `assets/dictionaries`. Không cần cài thêm thư viện hay dùng mạng để kiểm tra từ. Các thành phần giữ giấy phép riêng của tác giả; xem kho nguồn và metadata trong môi trường trước khi phân phối lại.
+PySide6 Essentials, OpenCV, PyAV/FFmpeg, [RapidOCR](https://github.com/RapidAI/RapidOCR) và ONNX Runtime. Các model [PaddleOCR PP-OCRv6](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv6/PP-OCRv6.en.md) Tiny/Small/Medium dùng chung cho Trung/Anh, nguồn ONNX [RapidAI v3.10.0](https://www.modelscope.cn/models/RapidAI/RapidOCR/files); SHA256 cố định trong `subocr/ocr_models.py`. Gói Colab chỉ chứa hai model của cỡ đang chọn. Từ điển tiếng Anh lấy từ [SymSpellPy](https://github.com/mammothb/symspellpy/blob/master/symspellpy/frequency_dictionary_en_82_765.txt), đóng gói sẵn; nguồn, hash và giấy phép trong `assets/dictionaries`. Không cần cài thêm thư viện hay dùng mạng để kiểm tra từ. Các thành phần giữ giấy phép riêng của tác giả; xem kho nguồn và metadata trong môi trường trước khi phân phối lại.

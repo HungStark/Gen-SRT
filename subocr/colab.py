@@ -14,12 +14,12 @@ import zipfile
 
 from .core import Cue, Settings
 from .editing import cue_errors
+from .ocr_models import model_files, model_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = 1
 SOURCE_FILES = ('subocr/__init__.py', 'subocr/core.py', 'subocr/video.py',
-                'subocr/editing.py', 'subocr/colab.py', 'colab/run_job.py')
-EN_MODEL = 'models/en_PP-OCRv4_rec_mobile.onnx'
+                'subocr/editing.py', 'subocr/colab.py', 'subocr/ocr_models.py', 'colab/run_job.py')
 
 
 class VideoMismatchError(ValueError):
@@ -102,8 +102,13 @@ def validate_job(data):
             raise ValueError('Kích thước video không hợp lệ.')
     _number(video.get('duration'), 'Thời lượng video', 0.001, 10**9)
     raw = data.get('settings')
+    # Schema 1 results exported before PP-OCRv6 remain importable.
+    if isinstance(raw, dict):
+        raw = {'device': 'cpu', 'model_size': 'small', **raw}
     if not isinstance(raw, dict) or set(raw) != {f.name for f in fields(Settings)}:
         raise ValueError('Cấu hình OCR không hợp lệ.')
+    if raw['device'] not in ('cpu', 'gpu') or raw['model_size'] not in ('tiny', 'small', 'medium'):
+        raise ValueError('Thiết bị hoặc model OCR không hợp lệ.')
     roi = raw['roi']
     if not isinstance(roi, (list, tuple)) or len(roi) != 4 or any(type(v) is not int for v in roi):
         raise ValueError('Vùng phụ đề không hợp lệ.')
@@ -176,11 +181,10 @@ def export_bundle(parent, video_path, cfg, width, height, duration, reusable=Fal
     job = {'schema': SCHEMA, 'kind': 'sublens-colab-job', 'job_id': uuid.uuid4().hex,
            'video': {'name': video_path.name, 'width': width, 'height': height,
                      'duration': duration, **video_identity(video_path)}, 'settings': asdict(cfg),
-           'reusable': reusable}
+           'reusable': reusable, 'ocr': 'PP-OCRv6'}
     job['settings'] = asdict(validate_job(job))
-    sources = [*SOURCE_FILES]
-    if cfg.language == 'en':
-        sources.append(EN_MODEL)
+    model_paths(cfg.model_size)  # Verify the selected weights before exporting.
+    sources = [*SOURCE_FILES, *model_files(cfg.model_size)]
     notebook = ROOT / 'colab/SubLens_Colab.ipynb'
     for source in [*(ROOT / name for name in sources), notebook]:
         if not source.is_file():

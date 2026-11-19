@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from pathlib import Path
 import sys
 import threading
@@ -16,7 +17,11 @@ from subocr.video import extract, ScanStats
 
 def run(job_path, video_path, output_dir, use_cuda=True):
     job = bind_video_job(read_json(job_path), video_path)
+    if job.get('ocr') != 'PP-OCRv6':
+        raise ValueError('Gói này dùng OCR cũ. Xuất lại gói PP-OCRv6 từ app mới.')
     cfg = validate_job(job)
+    cfg.device = 'gpu' if use_cuda else 'cpu'
+    job['settings'] = asdict(cfg)
     if use_cuda:
         import onnxruntime as ort
         # Load the CUDA 12 / cuDNN 9 libraries installed by the notebook.
@@ -24,7 +29,9 @@ def run(job_path, video_path, output_dir, use_cuda=True):
             ort.preload_dlls(directory='')
         if 'CUDAExecutionProvider' not in ort.get_available_providers():
             raise RuntimeError('Chưa có CUDAExecutionProvider. Chọn runtime GPU rồi chạy lại ô cài đặt.')
-    engine = OcrEngine(use_cuda=use_cuda)
+    print(f'Đang nạp PP-OCRv6 {cfg.model_size} · {cfg.device.upper()}…', flush=True)
+    engine = OcrEngine(cfg.device, cfg.model_size)
+    print(f'Phát hiện và nhận dạng chữ: {engine.provider}', flush=True)
     stats = ScanStats()
     last_print = -10.
 

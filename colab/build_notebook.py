@@ -84,11 +84,12 @@ cells = [
     python = runtime / 'bin/python'
     if not python.is_file():
         run_logged([*uv, 'venv', '--python', '3.12', '--managed-python', str(runtime)], env=uv_env)
-    # Keep packages out of the Colab kernel and never substitute the unrelated `rapidocr` API.
+    # Keep PP-OCRv6 packages out of the Colab kernel.
+    run_logged([*uv, 'pip', 'uninstall', '--python', str(python), 'rapidocr-onnxruntime',
+                'onnxruntime', 'onnxruntime-gpu', 'opencv-python', 'opencv-python-headless'], env=uv_env)
     run_logged([*uv, 'pip', 'install', '--python', str(python), '--only-binary', ':all:',
-                'rapidocr-onnxruntime==1.4.4', 'numpy==2.2.6', 'opencv-python==4.11.0.86',
+                'rapidocr==3.10.0', 'numpy==2.2.6', 'opencv-python-headless==4.11.0.86',
                 'av==16.0.1', 'Pillow==11.2.1'], env=uv_env)
-    run_logged([*uv, 'pip', 'uninstall', '--python', str(python), 'onnxruntime', 'onnxruntime-gpu'], env=uv_env)
     run_logged([*uv, 'pip', 'install', '--python', str(python), '--only-binary', ':all:',
                 'onnxruntime-gpu[cuda,cudnn]==1.23.2'], env=uv_env)
     OCR_ENV = dict(os.environ)
@@ -97,21 +98,15 @@ cells = [
     OCR_ENV['PYTHONUNBUFFERED'] = '1'
     gpu_check = textwrap.dedent("""
     import sys
-    import numpy as np
     import av, cv2
     import onnxruntime as ort
     print('Python OCR:', sys.version, flush=True)
     print('ONNX Runtime:', ort.__version__, ort.get_available_providers(), flush=True)
     ort.preload_dlls(directory='')
-    from rapidocr_onnxruntime import RapidOCR
-    ocr = RapidOCR(det_use_cuda=True, rec_use_cuda=True, intra_op_num_threads=2)
-    for name, inference in (('text_det', ocr.text_det.infer), ('text_rec', ocr.text_rec.session)):
-        providers = inference.session.get_providers()
-        print(name, providers, flush=True)
-        if providers[0] != 'CUDAExecutionProvider':
-            raise RuntimeError('OCR chưa dùng được CUDA. Xem lỗi thư viện GPU ở phía trên.')
-    ocr(np.zeros((96, 640, 3), dtype=np.uint8), use_cls=False)
-    print('Đã chạy thử OCR trên GPU thành công.', flush=True)
+    from rapidocr import RapidOCR
+    if 'CUDAExecutionProvider' not in ort.get_available_providers():
+        raise RuntimeError('Thiếu runtime CUDA. Chạy lại ô cài đặt và chọn GPU.')
+    print('Runtime CUDA sẵn sàng. Ô 4 sẽ kiểm tra GPU trên model PP-OCRv6 trong gói.', flush=True)
     """)
     run_logged([str(python), '-u', '-c', gpu_check], env=OCR_ENV)
     OCR_PYTHON = str(python)
@@ -151,14 +146,16 @@ cells = [
     bundle = Path(next(iter(uploaded)))
     del uploaded
     required = {'job.json', 'subocr/__init__.py', 'subocr/core.py', 'subocr/video.py',
-                'subocr/editing.py', 'subocr/colab.py', 'colab/run_job.py'}
-    allowed = required | {'models/en_PP-OCRv4_rec_mobile.onnx'}
+                'subocr/editing.py', 'subocr/colab.py', 'subocr/ocr_models.py', 'colab/run_job.py'}
+    model_names = {f'models/PP-OCRv6_{task}_{size}.onnx'
+                   for size in ('tiny', 'small', 'medium') for task in ('det', 'rec')}
+    allowed = required | model_names
     workspace = Path(tempfile.mkdtemp(prefix='sublens_', dir='/content'))
     with zipfile.ZipFile(bundle) as archive:
         names = archive.namelist()
         if len(set(names)) != len(names) or not required <= set(names) or not set(names) <= allowed:
             raise ValueError('Gói không đúng định dạng. Hãy xuất lại từ app SubLens.')
-        if sum(info.file_size for info in archive.infolist()) > 100 * 1024 * 1024:
+        if sum(info.file_size for info in archive.infolist()) > 256 * 1024 * 1024:
             raise ValueError('Gói quá lớn. Video phải tải riêng, không nằm trong gói .zip.')
         for name in names:
             archive.extract(name, workspace)
@@ -169,6 +166,12 @@ cells = [
                cwd=str(workspace), env=OCR_ENV)
     job = json.loads((workspace / 'job.json').read_text(encoding='utf-8-sig'))
     cfg = SimpleNamespace(**job['settings'])
+    if job.get('ocr') != 'PP-OCRv6':
+        raise ValueError('Xuất lại gói PP-OCRv6 từ app mới.')
+    expected_models = {f'models/PP-OCRv6_{task}_{cfg.model_size}.onnx' for task in ('det', 'rec')}
+    if set(names) != required | expected_models:
+        raise ValueError('Gói thiếu model PP-OCRv6 đã chọn. Xuất lại từ app mới.')
+    print('Model: PP-OCRv6', cfg.model_size)
     if job.get('reusable', False):
         print('Gói dùng cho nhiều video · video mẫu:', job['video']['name'])
         print('Kích thước yêu cầu:', job['video']['width'], '×', job['video']['height'])

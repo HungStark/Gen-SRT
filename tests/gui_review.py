@@ -64,24 +64,18 @@ def run():
     window.undo()
     assert window.table.item(2, 1).foreground().color().name() == '#203047'
 
-    # Accepting a custom name updates the colors now and survives a new window.
+    # Existing accepted words still load, while Options only exposes OCR controls.
     custom_path = Path('test_artifacts/accepted_words_test.txt').resolve()
+    custom_path.write_text('FLM\nKunzi', encoding='utf-8')
     with patch('subocr.ui.ACCEPTED_WORDS_PATH', custom_path):
-        window.cues = [Cue(0, 1, 'A flm is here.', .99)]
-        window.fill_table()
-        assert_levels('orange')
-        window.options_dialog.show()
-        window.accepted_words_edit.setPlainText('FLM\nKunzi')
-        window.options_dialog.reject()
-        assert_levels('none')
-        assert custom_path.read_text(encoding='utf-8') == 'FLM\nKunzi'
         second = MainWindow()
-        second.cues = list(window.cues)
+        assert not hasattr(second, 'accepted_words_edit')
+        second.cues = [Cue(0, 1, 'A flm is here.', .99)]
         second.fill_table()
         assert second.table.item(0, 2).background().color().name() == ROW_COLORS['none']
         second.close()
     window.close()
-    print('GUI review passed: priorities, exact threshold, names, tooltips, edit/delete/undo and saved allowlist.')
+    print('GUI review passed: priorities, exact threshold, names, tooltips, edit/delete/undo and existing accepted words.')
 
 
 if __name__ == '__main__':

@@ -6,6 +6,10 @@ $env:PYTHONUSERBASE = Join-Path $PSScriptRoot '.cache\python-user'
 $env:PYTHONNOUSERSITE = '1'
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Run setup.bat first.' }
+& $python -c 'from subocr.ocr_models import model_paths, MODEL_SIZES; [model_paths(size) for size in MODEL_SIZES]'
+if ($LASTEXITCODE -ne 0) { throw 'Missing or corrupt PP-OCRv6 weights. Run setup.bat.' }
+& $python 'colab\build_notebook.py'
+if ($LASTEXITCODE -ne 0) { throw 'Could not generate Colab notebook.' }
 & $python -c 'import PyInstaller'
 if ($LASTEXITCODE -ne 0) {
     uv pip install --python $python 'pyinstaller==6.22.3'

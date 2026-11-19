@@ -24,15 +24,18 @@ class ColabTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.video = self.root / 'video.mp4'
         self.video.write_bytes(b'sample video bytes')
-        self.cfg = Settings((10, 70, 300, 20), 'en', color=(255, 255, 255), line_bands=[(.5, .3)])
+        self.cfg = Settings((10, 70, 300, 20), 'en', color=(255, 255, 255), line_bands=[(.5, .3)], model_size='tiny')
         self.folder = export_bundle(self.root, self.video, self.cfg, 320, 100, 4.8)
         with zipfile.ZipFile(self.folder / 'sublens_colab_video.zip') as archive:
             self.names = archive.namelist()
             self.job = json.loads(archive.read('job.json'))
 
-    def test_bundle_is_portable_and_english_model_is_included(self):
+    def test_bundle_is_portable_and_selected_v6_models_are_included(self):
         self.assertEqual(asdict(validate_job(self.job)), asdict(self.cfg))
-        self.assertIn('models/en_PP-OCRv4_rec_mobile.onnx', self.names)
+        self.assertIn('models/PP-OCRv6_det_tiny.onnx', self.names)
+        self.assertIn('models/PP-OCRv6_rec_tiny.onnx', self.names)
+        self.assertNotIn('models/PP-OCRv6_rec_medium.onnx', self.names)
+        self.assertEqual(self.job['ocr'], 'PP-OCRv6')
         self.assertIn('colab/run_job.py', self.names)
         self.assertNotIn('subocr/ui.py', self.names)
         self.assertNotIn(self.video.name, self.names)
@@ -120,43 +123,32 @@ class ColabTests(unittest.TestCase):
         data['cues'] = []
         self.assertEqual(validate_result(data)[1], [])
 
-    def test_cuda_requires_actual_sessions_and_cpu_remains_default(self):
-        with patch('rapidocr_onnxruntime.RapidOCR') as rapid:
-            OcrEngine()
-            self.assertFalse(rapid.call_args.kwargs['det_use_cuda'])
-            self.assertFalse(rapid.call_args.kwargs['rec_use_cuda'])
-            # Strict shapes reflect RapidOCR 1.4.4: detector.infer, recognizer.session.
-            detector_inference = SimpleNamespace(session=SimpleNamespace(get_providers=lambda: ['CPUExecutionProvider']))
-            recognizer_inference = SimpleNamespace(session=SimpleNamespace(get_providers=lambda: ['CUDAExecutionProvider']))
-            rapid.return_value.text_det = SimpleNamespace(infer=detector_inference)
-            rapid.return_value.text_rec = SimpleNamespace(session=recognizer_inference)
+    def test_gpu_requires_available_provider_and_cpu_remains_default(self):
+        engine = OcrEngine(model_size='tiny')
+        self.assertEqual(engine.provider, 'CPUExecutionProvider')
+        for part in (engine.engine.text_det, engine.engine.text_rec):
+            self.assertEqual(part.session.session.get_providers(), ['CPUExecutionProvider'])
+            with self.assertRaisesRegex(RuntimeError, 'CUDAExecutionProvider'):
+                engine._require_provider(part.session.session, 'CUDAExecutionProvider', 'test')
+        with patch('onnxruntime.get_available_providers', return_value=['CPUExecutionProvider']):
             with self.assertRaisesRegex(RuntimeError, 'GPU'):
-                OcrEngine(use_cuda=True)
-            detector_inference.session.get_providers = lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            engine = OcrEngine(use_cuda=True)
-            self.assertTrue(rapid.call_args.kwargs['rec_use_cuda'])
-            with patch('rapidocr_onnxruntime.ch_ppocr_rec.TextRecognizer') as english:
-                english.return_value.session.session.get_providers.return_value = ['CPUExecutionProvider']
-                with self.assertRaisesRegex(RuntimeError, 'tiếng Anh'):
-                    engine.read_english(None)
-                self.assertTrue(english.call_args.args[0]['use_cuda'])
+                OcrEngine('gpu', 'tiny')
 
-    def test_cuda_check_uses_real_rapidocr_detector_and_recognizer_sessions(self):
-        engine = OcrEngine()
-        # Access real library objects on CPU: the guard must report the absent GPU,
-        # rather than raise AttributeError from an invented detector attribute.
-        for inference in (engine.engine.text_det.infer, engine.engine.text_rec.session):
-            with self.subTest(inference=inference), self.assertRaisesRegex(RuntimeError, 'GPU'):
-                engine._require_cuda(inference, 'test')
-        # Only provider reporting is patched; object structure remains the real library's.
-        with patch.object(engine.engine.text_det.infer.session, 'get_providers', return_value=['CUDAExecutionProvider']), \
-                patch.object(engine.engine.text_rec.session.session, 'get_providers', return_value=['CUDAExecutionProvider']), \
-                patch('rapidocr_onnxruntime.RapidOCR', return_value=engine.engine):
-            OcrEngine(use_cuda=True)
+    def test_legacy_settings_remain_importable_but_invalid_models_are_rejected(self):
+        legacy = copy.deepcopy(self.job)
+        del legacy['settings']['device'], legacy['settings']['model_size']
+        cfg = validate_job(legacy)
+        self.assertEqual((cfg.device, cfg.model_size), ('cpu', 'small'))
+        for key, value in [('device', 'cuda'), ('model_size', 'large')]:
+            broken = copy.deepcopy(self.job)
+            broken['settings'][key] = value
+            with self.assertRaises(ValueError):
+                validate_job(broken)
 
-    def test_chinese_bundle_omits_optional_model(self):
+    def test_chinese_bundle_uses_same_multilingual_v6_models(self):
         folder = export_bundle(self.root, self.video, Settings((0, 70, 320, 30)), 320, 100, 4.8)
         with zipfile.ZipFile(folder / 'sublens_colab_video.zip') as archive:
+            self.assertIn('models/PP-OCRv6_rec_small.onnx', archive.namelist())
             self.assertNotIn('models/en_PP-OCRv4_rec_mobile.onnx', archive.namelist())
 
     def make_video(self, name, size=(320, 100), count=5, color=0):

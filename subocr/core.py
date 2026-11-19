@@ -57,6 +57,8 @@ class Settings:
     min_duration: float = .08
     algorithm: str = 'adaptive'
     boundary_precision: float = .1
+    device: str = 'cpu'
+    model_size: str = 'small'
 
 
 @dataclass
@@ -181,36 +183,60 @@ class Cue:
 
 
 class OcrEngine:
-    def __init__(self, use_cuda=False):
-        from rapidocr_onnxruntime import RapidOCR
-        self.use_cuda = use_cuda
-        self.engine = RapidOCR(intra_op_num_threads=4, inter_op_num_threads=1,
-                               det_limit_type='max', det_limit_side_len=1600, text_score=.1,
-                               det_use_cuda=use_cuda, rec_use_cuda=use_cuda)
-        self.english = None
-        if use_cuda:
-            self._require_cuda(self.engine.text_det.infer, 'phát hiện chữ')
-            self._require_cuda(self.engine.text_rec.session, 'nhận dạng chữ')
+    def __init__(self, device='cpu', model_size='small'):
+        import onnxruntime as ort
+        from omegaconf import flag_override
+        from rapidocr import RapidOCR
+        from rapidocr.utils.typings import OCRVersion, ModelType
+        from .ocr_models import model_paths
+
+        if device not in ('cpu', 'gpu'):
+            raise ValueError('Thiết bị OCR phải là CPU hoặc GPU.')
+        paths = model_paths(model_size)
+        self.device, self.model_size = device, model_size
+        providers = ort.get_available_providers()
+        self.provider = 'CPUExecutionProvider'
+        if device == 'gpu':
+            self.provider = next((p for p in ('CUDAExecutionProvider', 'DmlExecutionProvider') if p in providers), None)
+            if self.provider is None:
+                raise RuntimeError('Chưa có runtime GPU. Windows cần DirectML; Colab cần CUDA. Chọn CPU hoặc cài lại thư viện GPU.')
+            if self.provider == 'CUDAExecutionProvider' and hasattr(ort, 'preload_dlls'):
+                ort.preload_dlls(directory='')
+        self.engine = RapidOCR(params={
+            'Global.use_cls': False, 'Global.text_score': .1, 'Global.log_level': 'error',
+            'Det.ocr_version': OCRVersion.PPOCRV6, 'Rec.ocr_version': OCRVersion.PPOCRV6,
+            'Det.model_type': ModelType(model_size), 'Rec.model_type': ModelType(model_size),
+            'Det.model_path': str(paths[0]), 'Rec.model_path': str(paths[1]),
+            'Det.limit_type': 'max', 'Det.limit_side_len': 1600,
+        })
+        # Explicit sessions keep CPU selection strict and configure DirectML correctly.
+        # RapidOCR 3.10 supports injecting sessions into Det/Rec via its config.
+        for name, path in zip(('Det', 'Rec'), paths):
+            options = ort.SessionOptions()
+            options.intra_op_num_threads, options.inter_op_num_threads = 4, 1
+            options.log_severity_level = 3
+            if self.provider == 'DmlExecutionProvider':
+                options.enable_mem_pattern = False
+                options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            # Vendor metacommands produce wrong text on the laptop's Iris Xe driver.
+            # Portable DirectML kernels pass the same Chinese/English checks as CPU.
+            provider = (self.provider, {'disable_metacommands': 'true'}) if self.provider == 'DmlExecutionProvider' else self.provider
+            session = ort.InferenceSession(str(path), sess_options=options, providers=[provider])
+            self._require_provider(session, self.provider, name)
+            with flag_override(self.engine.cfg, 'allow_objects', True):
+                self.engine.cfg[name].session = session
+        self.engine._load_det_model()
+        self.engine._load_rec_model()
 
     @staticmethod
-    def _require_cuda(inference, name):
-        if inference.session.get_providers()[0] != 'CUDAExecutionProvider':
-            raise RuntimeError(f'OCR {name} chưa dùng được GPU. Kiểm tra runtime GPU và CUDA/cuDNN trong notebook.')
+    def _require_provider(session, provider, name):
+        if session.get_providers()[0] != provider:
+            raise RuntimeError(f'PP-OCRv6 {name} không chạy được trên {provider}. Chọn CPU hoặc kiểm tra thư viện GPU.')
 
     def read_english(self, image):
-        if self.english is None:
-            from rapidocr_onnxruntime.ch_ppocr_rec import TextRecognizer
-            model = Path(__file__).resolve().parents[1] / 'models' / 'en_PP-OCRv4_rec_mobile.onnx'
-            if not model.is_file():
-                raise ValueError('Thiếu mô hình tiếng Anh. Chạy setup.bat để tải lại.')
-            english = TextRecognizer(dict(model_path=str(model), use_cuda=self.use_cuda, use_dml=False,
-                                               intra_op_num_threads=4, inter_op_num_threads=1,
-                                               rec_img_shape=[3, 48, 320], rec_batch_num=6))
-            if self.use_cuda:
-                self._require_cuda(english.session, 'tiếng Anh')
-            self.english = english
-        results, _ = self.english(image)
-        return results[0]
+        from rapidocr.ch_ppocr_rec.typings import TextRecInput
+        result = self.engine.text_rec(TextRecInput(img=image))
+        return str(result.txts[0]), float(result.scores[0])
 
     def read(self, frame: np.ndarray, cfg: Settings) -> Observation:
         x, y, w, h = cfg.roi
@@ -219,7 +245,8 @@ class OcrEngine:
             raise ValueError('Vùng OCR rỗng. Hãy chọn lại vùng phụ đề.')
         scale = min(3.0, max(1.0, 130 / h))
         enlarged = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-        results, _ = self.engine(enlarged, use_cls=False)
+        output = self.engine(enlarged, use_det=True, use_cls=False, use_rec=True)
+        results = zip(output.boxes, output.txts, output.scores) if output.boxes is not None else []
         fragments = []
         for points, text, score in results or []:
             pts = np.array(points) / scale

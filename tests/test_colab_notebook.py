@@ -59,39 +59,31 @@ class ColabNotebookTests(unittest.TestCase):
         self.assertEqual(len(managed), 1)
         self.assertIn('3.12', managed[0])
         installs = [cmd for cmd, _ in commands if 'install' in cmd and 'pip' in cmd and '--python' in cmd]
-        self.assertTrue(any('rapidocr-onnxruntime==1.4.4' in cmd for cmd in installs))
+        self.assertTrue(any('rapidocr==3.10.0' in cmd for cmd in installs))
         self.assertTrue(all(cmd[cmd.index('--python') + 1] != sys.executable for cmd in installs))
-        self.assertFalse(any('rapidocr' in cmd for cmd, _ in commands))
-        # The preflight actually imports the legacy API and performs an OCR inference.
-        self.assertIn('from rapidocr_onnxruntime import RapidOCR', commands[-1][0][-1])
-        self.assertIn('ocr(np.zeros', commands[-1][0][-1])
+        # Setup verifies the CUDA runtime; the runner probes packaged PP-OCRv6 sessions.
+        self.assertIn('from rapidocr import RapidOCR', commands[-1][0][-1])
+        self.assertIn('CUDAExecutionProvider', commands[-1][0][-1])
         self.assertTrue(Path(namespace['OCR_PYTHON']).as_posix().endswith('sublens_runtime_py312/bin/python'))
 
-    def test_gpu_preflight_uses_real_library_structure(self):
+    def test_gpu_preflight_checks_cuda_without_downloading_a_default_model(self):
         import onnxruntime as ort
-        from rapidocr_onnxruntime import RapidOCR
-        ocr = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
-        # Extract and run the GPU probe exactly as distributed in the notebook.
         tree = ast.parse(self.cells[0])
         assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
                           and any(isinstance(t, ast.Name) and t.id == 'gpu_check' for t in node.targets))
         probe = textwrap.dedent(ast.literal_eval(assignment.value.args[0]))
-        with patch.object(ort, 'preload_dlls', create=True), \
-                patch('rapidocr_onnxruntime.RapidOCR', return_value=ocr), \
-                contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(RuntimeError, 'CUDA'):
-                exec(compile(probe, '<GPU probe, actual CPU library>', 'exec'), {})
-            with patch.object(ocr.text_det.infer.session, 'get_providers', return_value=['CUDAExecutionProvider']), \
-                    patch.object(ocr.text_rec.session.session, 'get_providers', return_value=['CUDAExecutionProvider']):
-                # Inference really runs on CPU here; this verifies the integration's
-                # attribute access and success path, not GPU availability or speed.
-                exec(compile(probe, '<GPU probe, reported CUDA>', 'exec'), {})
+        with patch.object(ort, 'preload_dlls', create=True), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(ort, 'get_available_providers', return_value=['CPUExecutionProvider']):
+                with self.assertRaisesRegex(RuntimeError, 'CUDA'):
+                    exec(compile(probe, '<GPU probe, CPU only>', 'exec'), {})
+            with patch.object(ort, 'get_available_providers', return_value=['CUDAExecutionProvider', 'CPUExecutionProvider']):
+                exec(compile(probe, '<GPU probe, CUDA runtime>', 'exec'), {})
 
     def test_step4_uses_ocr_interpreter_and_clears_old_result_on_failure(self):
         workspace = self.root / 'workspace'
         (workspace / 'colab').mkdir(parents=True)
         runner = workspace / 'colab/run_job.py'
-        runner.write_text("import sys\nprint('ModuleNotFoundError: rapidocr_onnxruntime', file=sys.stderr)\nsys.exit(1)\n", encoding='utf-8')
+        runner.write_text("import sys\nprint('ModuleNotFoundError: rapidocr', file=sys.stderr)\nsys.exit(1)\n", encoding='utf-8')
         video = workspace / 'input.mp4'
         video.write_bytes(b'video')
         env = {'Path': Path, 'tempfile': tempfile, 'workspace': workspace, 'video': video,
@@ -104,11 +96,11 @@ class ColabNotebookTests(unittest.TestCase):
             if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'save_results_to_drive' for t in node.targets):
                 node.value = ast.Constant(False)
         ast.fix_missing_locations(tree)
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'rapidocr_onnxruntime'):
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'rapidocr'):
             exec(compile(tree, '<notebook step4>', 'exec'), env)
         self.assertIsNone(env['output'])
         self.assertEqual(env['command'][0], sys.executable)
-        self.assertIn('rapidocr_onnxruntime', (env['run_output'] / 'ocr.log').read_text())
+        self.assertIn('rapidocr', (env['run_output'] / 'ocr.log').read_text())
         # A later successful retry gets a separate output directory and streams its log too.
         failed_output = env['run_output']
         runner.write_text("import sys,json\nfrom pathlib import Path\np=Path(sys.argv[sys.argv.index('--output')+1])\n(p/'result.sublens.json').write_text(json.dumps({'job':{'settings':{'language':'en'}}}))\n(p/'result.en.srt').write_text('subtitle content')\nprint('OCR finished')\n", encoding='utf-8')

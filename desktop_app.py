@@ -58,6 +58,20 @@ def self_test(report_path):
         chinese = engine.read(frame, Settings((0, 95, 960, 105), 'zh')).text
         if 'Hello subtitle world' not in english or not chinese:
             raise AssertionError(f'Bundled OCR failed: {english!r}, {chinese!r}')
+        from subocr.ocr_models import MODEL_SIZES, model_paths
+        for size in MODEL_SIZES:
+            model_paths(size)
+        report['ocr'] = 'PP-OCRv6'
+        report['provider'] = engine.provider
+        if os.environ.get('SUBLENS_TEST_GPU') == '1':
+            report['gpu'] = []
+            for size in MODEL_SIZES:
+                gpu_engine = OcrEngine('gpu', size)
+                gpu_en = gpu_engine.read(frame, Settings((0, 0, 960, 95), 'en', device='gpu', model_size=size)).text
+                gpu_zh = gpu_engine.read(frame, Settings((0, 95, 960, 105), 'zh', device='gpu', model_size=size)).text
+                if (gpu_en, gpu_zh) != (english, chinese):
+                    raise AssertionError(f'Bundled GPU OCR failed: {size}, {gpu_en!r}, {gpu_zh!r}')
+                report['gpu'].append(dict(size=size, provider=gpu_engine.provider, english=gpu_en, chinese=gpu_zh))
         video = report_path.parent / 'bundled_demo.mp4'
         writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'mp4v'), 10, (960, 200))
         if not writer.isOpened():
@@ -77,6 +91,10 @@ def self_test(report_path):
         window.show()
         application.processEvents()
         window.grab().save(str(report_path.with_suffix('.png')))
+        window.options_dialog.show()
+        application.processEvents()
+        window.options_dialog.grab().save(str(report_path.with_name('options.png')))
+        window.options_dialog.reject()
         folder = export_bundle(report_path.parent, video, cfg, 960, 200, 1.2, reusable=True)
         with zipfile.ZipFile(folder / f'sublens_colab_{video.stem}.zip') as archive:
             job = json.loads(archive.read('job.json'))
