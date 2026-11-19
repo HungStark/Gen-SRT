@@ -4,6 +4,8 @@
 
 ## Mở ứng dụng
 
+Có thể đóng gói ứng dụng Windows bằng `build_windows.bat`, rồi chạy `install_windows.bat` để cài vào `%LOCALAPPDATA%\Programs\SubLens` và tạo biểu tượng **SubLens** trên Desktop và Start Menu. Bản `.exe` kèm thư viện, mô hình OCR và gói nguồn cần cho Colab; không cần Python hoặc uv để sử dụng. Khi chuyển sang máy khác, chép cả thư mục `dist\SubLens` cùng `install_windows.ps1` / `install_windows.bat` theo đúng cấu trúc dự án. Trong bản cài đặt, từ được chấp nhận và nhật ký nằm tại `%LOCALAPPDATA%\SubLens`, được giữ khi cập nhật. Tạo lại bản `.exe` và cài lại sau khi sửa mã nguồn.
+
 Môi trường đã được cài trong thư mục dự án. Bấm đúp **`start.bat`**. Sau khi cập nhật, đóng cửa sổ cũ rồi mở lại.
 
 Khi cần cài lại, cài [uv](https://docs.astral.sh/uv/getting-started/installation/), rồi chạy `setup.bat`. Python 3.12, thư viện và mô hình được tải vào thư mục dự án. Cần mạng lúc cài; sau đó OCR chạy cục bộ. Nếu di chuyển thư mục sang đường dẫn khác, hãy tạo lại môi trường bằng setup.

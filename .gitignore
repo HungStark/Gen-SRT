@@ -5,3 +5,5 @@ __pycache__/
 *.srt
 test_artifacts/
 sublens.log
+build/
+dist/
