@@ -9,6 +9,7 @@ datas += [(str(root / 'assets'), 'assets'), (str(root / 'models'), 'models'),
           (str(root / 'colab/SubLens_Colab.ipynb'), 'colab'),
           (str(root / 'accepted_words.txt'), '.'), (str(root / 'README.md'), '.')]
 datas += collect_data_files('rapidocr_onnxruntime')
+datas += collect_data_files('imageio_ffmpeg')
 
 a = Analysis([str(root / 'desktop_app.py')], pathex=[str(root)],
              binaries=collect_dynamic_libs('onnxruntime'), datas=datas,

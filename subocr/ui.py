@@ -257,6 +257,13 @@ class MainWindow(QMainWindow):
         self.resize(min(1240, available.width() - 32) if available else 1240,
                     min(820, available.height() - 56) if available else 820)
         self.setAcceptDrops(True)
+        tools_menu = self.menuBar().addMenu('Công cụ')
+        self.menuBar().setStyleSheet('QMenuBar { background: #f7f9fc; color: #203047; } '
+                                    'QMenuBar::item:selected { background: #e1ece8; }')
+        tools_menu.setStyleSheet('QMenu { background: #ffffff; color: #203047; } '
+                                'QMenu::item:selected { background: #167968; color: white; }')
+        self.resize_video_action = tools_menu.addAction('Đưa video về cùng kích thước…')
+        self.resize_video_action.triggered.connect(self.open_resize_dialog)
         self.capture = self.video_path = self.engine = self.worker = None
         self.duration = self.current_time = 0.
         self.preview_bands, self.preview_lines, self.cues, self.undo_stack = [], [], [], []
@@ -429,9 +436,16 @@ class MainWindow(QMainWindow):
         self.undo_shortcut.setContext(Qt.WidgetShortcut)
         self.undo_shortcut.activated.connect(self.undo)
         self.job_controls = [self.open_button, self.options_button, self.canvas, self.slider,
-                             self.language, self.preview_button, self.run_button, self.colab_button]
+                             self.language, self.preview_button, self.run_button, self.colab_button, self.resize_video_action]
         self.statusBar().showMessage('Quét 0,5 giây · chia đôi mốc đổi câu đến khoảng 0,1 giây')
         self.update_actions()
+
+    def open_resize_dialog(self):
+        if self.worker is None:
+            from .resize_ui import ResizeVideoDialog
+            dialog = ResizeVideoDialog(self)
+            dialog.exec()
+            dialog.deleteLater()
 
     def _build_options(self):
         self.options_dialog = QDialog(self)

@@ -17,7 +17,13 @@ foreach ($directory in @($installRoot, $desktop, $programs)) {
 }
 $exeTarget = Join-Path $installRoot 'SubLens.exe'
 $running = Get-Process -Name 'SubLens' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exeTarget }
-if ($running) { throw 'Close SubLens before installing an update.' }
+if ($running) {
+    # Keep an active editing session intact; the shortcut will open the new build.
+    $versionName = (Get-Date -Format 'yyyyMMdd_HHmmss') + '_' + [guid]::NewGuid().ToString('N').Substring(0, 6)
+    $installRoot = Join-Path $installRoot ('versions\' + $versionName)
+    New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+    $exeTarget = Join-Path $installRoot 'SubLens.exe'
+}
 foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
     Copy-Item -LiteralPath $item.FullName -Destination $installRoot -Recurse -Force
 }

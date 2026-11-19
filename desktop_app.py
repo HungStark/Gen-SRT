@@ -93,6 +93,11 @@ def self_test(report_path):
             archive.write(result_path, 'Video/result.sublens.json')
         if load_result(downloaded, video)[1] != cues:
             raise AssertionError('Bundled result ZIP import failed')
+        from subocr.resizing import resize_videos
+        resized_folder, resized = resize_videos([video], report_path.parent, 640, 360)
+        if len(resized) != 1 or (resized[0]['output']['width'], resized[0]['output']['height']) != (640, 360):
+            raise AssertionError('Bundled FFmpeg resize failed')
+        report['resized_video'] = str(resized_folder / resized[0]['file'])
         window.close()
         report.update(ok=True, english=english, chinese=chinese, cues=len(cues),
                       dictionary_words=len(english_frequencies()), colab_bundle=str(folder),

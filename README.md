@@ -10,6 +10,14 @@ Môi trường đã được cài trong thư mục dự án. Bấm đúp **`star
 
 Khi cần cài lại, cài [uv](https://docs.astral.sh/uv/getting-started/installation/), rồi chạy `setup.bat`. Python 3.12, thư viện và mô hình được tải vào thư mục dự án. Cần mạng lúc cài; sau đó OCR chạy cục bộ. Nếu di chuyển thư mục sang đường dẫn khác, hãy tạo lại môi trường bằng setup.
 
+## Đưa nhiều video về cùng kích thước
+
+Mở **Công cụ → Đưa video về cùng kích thước…**, chọn nhiều video, đặt chiều rộng/cao (mặc định **1920 × 1080**) và chọn nơi lưu, rồi bấm **Chuyển kích thước**. Có sẵn các kích thước 1920×1080, 1280×720 và 1080×1920; có thể nhập kích thước tùy chỉnh bằng số chẵn. Mỗi video được xuất riêng thành MP4, giữ âm thanh, thời lượng và tệp gốc. Có tiến trình và nút Dừng.
+
+Hình được phóng/thu theo cùng một tỉ lệ sao cho **cả hai chiều đều lớn hơn hoặc bằng kích thước đích**, rồi **cắt giữa để bỏ phần dư**. Không thêm viền hay kéo méo hình. Ví dụ đích 1920×1080: video 2520×1080 giữ kích thước rồi cắt 300 pixel mỗi bên; video 1620×720 phóng thành 2430×1080 rồi cắt 255 pixel mỗi bên. Nội dung ở rìa, kể cả chữ phụ đề, có thể bị cắt; tăng độ phân giải không khôi phục chi tiết đã thiếu trong video nguồn.
+
+Kết quả nằm trong thư mục mới `Video_<rộng>x<cao>_<thời gian>_<mã>/`, giữ tên gốc và đổi đuôi thành `.mp4`; tên trùng được thêm số. Tệp `ket_qua_chuyen_kich_thuoc.json` ghi các video đã xử lý, `resize.log` ghi lỗi nếu có. FFmpeg đi kèm bản Windows, không cần cài riêng. Công cụ này thay cho tính năng ghép video trước đó.
+
 ## Luồng riêng: quét bằng GPU Colab
 
 Luồng cục bộ qua `app.py` / `start.bat` và nút **Đọc cả video** vẫn chạy CPU trên máy như trước. Colab là một lựa chọn riêng trong menu **Colab GPU** ở hàng chọn video.
