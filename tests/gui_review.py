@@ -64,6 +64,18 @@ def run():
     window.undo()
     assert window.table.item(2, 1).foreground().color().name() == '#203047'
 
+    # Short Chinese OCR substitutions are warnings even at high confidence.
+    window.cues = [Cue(0, 1, '但是总感觉不对劲', .95),
+                   Cue(1, 2, '但是总感觉不对动', .96),
+                   Cue(2, 3, '但是总感党不对动', .98)]
+    window.fill_table()
+    assert_levels('yellow', 'yellow', 'yellow')
+    assert 'Vàng:' in window.table.item(1, 2).toolTip()
+    window.table.item(1, 2).setText('我们马上离开这里')
+    assert_levels('none', 'none', 'none')
+    window.undo()
+    assert_levels('yellow', 'yellow', 'yellow')
+
     # Existing accepted words still load, while Options only exposes OCR controls.
     custom_path = Path('test_artifacts/accepted_words_test.txt').resolve()
     custom_path.write_text('FLM\nKunzi', encoding='utf-8')

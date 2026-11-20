@@ -46,6 +46,14 @@ def self_test(report_path):
         application = QApplication([])
         app_module.configure_app(application)
         window = app_module.MainWindow()
+        from subocr.core import Cue
+        from subocr.review import ROW_COLORS
+        window.cues = [Cue(0, 1, '但是总感觉不对劲', .95), Cue(1, 2, '但是总感觉不对动', .96)]
+        window.fill_table()
+        if any(window.table.item(row, 2).background().color().name() != ROW_COLORS['yellow'] for row in (0, 1)):
+            raise AssertionError('Bundled Chinese duplicate warning failed')
+        report['chinese_duplicate_warnings'] = True
+        window.cues = []
         engine = OcrEngine()
         canvas = Image.new('RGB', (960, 200), (30, 35, 45))
         draw = ImageDraw.Draw(canvas)

@@ -151,6 +151,20 @@ class ColabTests(unittest.TestCase):
             self.assertIn('models/PP-OCRv6_rec_small.onnx', archive.namelist())
             self.assertNotIn('models/en_PP-OCRv4_rec_mobile.onnx', archive.namelist())
 
+    def test_imported_colab_results_warn_for_short_chinese_ocr_variants(self):
+        from subocr.review import EnglishSpellChecker, review_rows
+        texts = ['但是总感觉不对劲', '但是总感觉不对动', '但是总感党不对动']
+        cues = [Cue(i, i + .8, text, .96) for i, text in enumerate(texts)]
+        result = self.root / 'result.sublens.json'
+        write_result(result, self.job, cues, ScanStats(), 'cuda')
+        download = self.root / 'download.zip'
+        with zipfile.ZipFile(download, 'w') as archive:
+            archive.write(result, 'Video/result.sublens.json')
+        imported = load_result(download, self.video)[1]
+        self.assertEqual(imported, cues)
+        self.assertEqual([review.level for review in review_rows(imported, EnglishSpellChecker())],
+                         ['yellow'] * 3)
+
     def make_video(self, name, size=(320, 100), count=5, color=0):
         path = self.root / name
         writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'mp4v'), 10, size)

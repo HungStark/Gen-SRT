@@ -76,7 +76,7 @@ Màu nền dòng được chọn theo thứ tự ưu tiên **đỏ → cam → v
 
 - **Đỏ:** điểm OCR gốc dưới **80%**; đúng 80% không thuộc điều kiện này.
 - **Cam:** có từ tiếng Anh nghi sai chính tả, ví dụ `flm`, `frst`, `Offcial`. Chỉ cảnh báo và gợi ý, không tự sửa chữ.
-- **Vàng:** nội dung giống hoặc gần giống dòng ngay trước/sau; cả hai dòng được đánh dấu. So sánh bỏ qua hoa/thường, dấu câu và khoảng trắng; câu dài dùng mức giống ít nhất 90%. Đây là cảnh báo, không tự gộp hoặc thay nội dung.
+- **Vàng:** nội dung giống hoặc gần giống dòng ngay trước/sau; cả hai dòng được đánh dấu. So sánh bỏ qua hoa/thường, dấu câu và khoảng trắng; câu dài dùng mức giống ít nhất 90%. Riêng câu có chữ Hán dài 5–7 ký tự cảnh báo khi lệch tối đa 1 ký tự; 8–20 ký tự cảnh báo khi lệch tối đa 2 ký tự (thêm/bớt/thay chữ). Áp dụng cả kết quả nhập từ Colab. Đây là cảnh báo, không tự gộp hoặc thay nội dung.
 - **Trắng:** không mắc ba điều kiện trên. Điểm cao, cờ cần kiểm tra cũ hoặc đã sửa thủ công không tự làm đổi màu nền.
 
 Rê chuột lên bất kỳ ô nào để xem tất cả lý do, kể cả khi một màu ưu tiên đã che các cảnh báo khác. Màu được tính lại sau khi sửa/xóa/gộp/hoàn tác. Cột tin cậy chuyển thành **Đã sửa** khi sửa/gộp; tooltip giữ điểm OCR gốc để tham khảo. Các lỗi thời gian/chữ rỗng hiển thị bằng chữ đỏ và tooltip lỗi, phải sửa trước khi xuất; không ghi đè quy tắc màu nền. Sau khi xóa/gộp, số thứ tự trong SRT được đánh lại liên tục.

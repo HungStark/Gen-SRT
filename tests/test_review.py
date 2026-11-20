@@ -79,6 +79,21 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue(similar_content('请所有同学立刻停止军训', '请所有同学立刻停止军训！'))
         self.assertFalse(similar_content('The film is ready.', 'Students in front, run.'))
 
+    def test_short_chinese_ocr_variants_warn_without_merging_or_changing_text(self):
+        texts = ['但是总感觉不对劲', '但是总感觉不对动', '但是总感党不对动',
+                 '嘿光下去问问就是了', '嘿先下去问问就是了', '嘿先下去问间就是了']
+        cues = [Cue(i, i + 1, text, .95) for i, text in enumerate(texts)]
+        reviews = review_rows(cues, self.checker)
+        self.assertEqual([review.level for review in reviews], ['yellow'] * len(cues))
+        self.assertEqual([cue.text for cue in cues], texts)
+        self.assertIn('1, 3', reviews[1].reasons[0])
+        self.assertTrue(similar_content('但是总感觉不对劲', '但是感觉不对劲'))
+        self.assertTrue(similar_content('嘿光下去问问就是了', '嘿先下去问间就是了'))
+        self.assertFalse(similar_content('但是总感觉不对劲', '我们马上离开这里'))
+        self.assertFalse(similar_content('但是总感觉不对劲', '但是他根本没离开这里'))
+        self.assertFalse(similar_content('我去这里', '你去这里'))
+        self.assertFalse(similar_content('但是总感觉不对劲', 'a' * 100000))
+
 
 if __name__ == '__main__':
     unittest.main()

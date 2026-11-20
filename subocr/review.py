@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import string
 
-from .core import normalized
+from .core import has_han, normalized
 
 
 DICTIONARY_PATH = Path(__file__).resolve().parents[1] / 'assets' / 'dictionaries' / 'en_frequency.txt'
@@ -110,9 +110,28 @@ def similar_content(first, second):
         return False
     if first == second:
         return True
-    if min(len(first), len(second)) < 6:
+    length = min(len(first), len(second))
+    matcher = SequenceMatcher(None, first, second, autojunk=False)
+    # Short Han captions lose over 10% similarity from a single OCR substitution.
+    # This only warns for manual review; extraction/automatic merging stays strict.
+    if has_han(first) and has_han(second) and 5 <= length <= 20:
+        budget = 1 if length < 8 else 2
+        if abs(len(first) - len(second)) <= budget:
+            previous = list(range(len(second) + 1))
+            for i, a in enumerate(first, 1):
+                current = [i]
+                for j, b in enumerate(second, 1):
+                    current.append(min(current[-1] + 1, previous[j] + 1,
+                                       previous[j - 1] + (a != b)))
+                if min(current) > budget:
+                    break
+                previous = current
+            else:
+                if previous[-1] <= budget:
+                    return True
+    if length < 6:
         return False
-    return SequenceMatcher(None, first, second, autojunk=False).ratio() >= .90
+    return matcher.ratio() >= .90
 
 
 @dataclass(frozen=True)
